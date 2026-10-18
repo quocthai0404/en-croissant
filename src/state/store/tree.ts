@@ -17,9 +17,11 @@ import {
     createNode,
     defaultTree,
     type GameHeaders,
+    type GeneratedCommentMetadata,
     getNodeAtPath,
     type TreeNode,
     type TreeState,
+    treeIterator,
     treeIteratorMainLine,
 } from "@/utils/treeReducer";
 
@@ -62,6 +64,7 @@ export interface TreeStoreState extends TreeState {
 
     setAnnotation: (payload: Annotation) => void;
     setComment: (payload: string) => void;
+    setGeneratedComments: (payload: { position: number[]; comment: GeneratedCommentMetadata }[]) => void;
     setHeaders: (payload: GameHeaders) => void;
     setResult: (payload: Outcome) => void;
     setShapes: (shapes: DrawShape[]) => void;
@@ -447,6 +450,19 @@ export const createTreeStore = (id?: string, initialTree?: TreeState) => {
                     const node = getNodeAtPath(state.root, state.position);
                     if (node) {
                         node.comment = payload;
+                    }
+                }),
+            ),
+        setGeneratedComments: (payload) =>
+            set(
+                produce((state) => {
+                    state.dirty = true;
+                    for (const { node } of treeIterator(state.root)) {
+                        node.generatedComment = undefined;
+                    }
+                    for (const { position, comment } of payload) {
+                        const node = getNodeAtPath(state.root, position);
+                        if (node) node.generatedComment = comment;
                     }
                 }),
             ),

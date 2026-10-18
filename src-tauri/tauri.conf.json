@@ -23,9 +23,9 @@
         "bundleMediaFramework": true
       }
     },
-    "publisher": "Francisco Salgueiro",
-    "shortDescription": "Ultimate Chess Toolkit",
-    "longDescription": "",
+    "publisher": "Chess Reviewer contributors",
+    "shortDescription": "Local-first chess game review",
+    "longDescription": "Analyze PGN games with a locally selected UCI engine and offline Vietnamese commentary.",
     "macOS": {
       "entitlements": null,
       "exceptionDomain": "",
@@ -34,10 +34,11 @@
       "signingIdentity": "-"
     },
     "resources": {
-      "../sound/": "sound/"
+      "../sound/": "sound/",
+      "../LICENSE": "LICENSE",
+      "../docs/LICENSE_NOTICES.md": "LICENSE_NOTICES.md"
     },
-    "targets": "all",
-    "createUpdaterArtifacts": "v1Compatible"
+    "targets": "all"
   },
   "build": {
     "beforeDevCommand": "pnpm start-vite",
@@ -45,9 +46,9 @@
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1420"
   },
-  "productName": "en-croissant",
-  "mainBinaryName": "en-croissant",
-  "identifier": "org.encroissant.app",
+  "productName": "Chess Reviewer",
+  "mainBinaryName": "chess-reviewer",
+  "identifier": "org.chessreviewer.desktop",
   "plugins": {
     "deep-link": {
       "desktop": {
@@ -65,18 +66,12 @@
         }
       ]
     },
-    "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDdGOTBFNjg2MzFGM0RDODUKUldTRjNQTXhodWFRZjc2MTNVeXRONGJkRjdGUXlCeW1MSlZESUczT0U4eE5hKzBmY3M2S0U2L0oK",
-      "endpoints": [
-        "https://www.encroissant.org/updates"
-      ]
-    }
   },
   "app": {
     "withGlobalTauri": false,
     "windows": [
       {
-        "title": "En Croissant",
+        "title": "Chess Reviewer",
         "visible": false,
         "decorations": true
       }

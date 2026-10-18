@@ -1,60 +1,39 @@
-<br />
-<div align="center">
-  <a href="https://github.com/franciscoBSalgueiro/en-croissant">
-    <img width="115" height="115" src="https://github.com/franciscoBSalgueiro/en-croissant/blob/master/src-tauri/icons/icon.png" alt="Logo">
-  </a>
+# Chess Reviewer
 
-<h3 align="center">En Croissant</h3>
+Chess Reviewer is a Windows-first, local-first desktop application adapted from En Croissant. Import a PGN, choose your own UCI engine, run a Game Report, and read offline Vietnamese commentary for the main line. Human notes and generated commentary remain separate.
 
-  <p align="center">
-    The Ultimate Chess Toolkit
-    <br />
-    <a href="https://www.encroissant.org"><strong>encroissant.org</strong></a>
-    <br />
-    <br />
-    <a href="https://discord.gg/tdYzfDbSSW">Discord Server</a>
-    ·
-    <a href="https://www.encroissant.org/download">Download</a>
-    .
-    <a href="https://www.encroissant.org/docs">Explore the docs</a>
-  </p>
-</div>
+## Run from source
 
-En-Croissant is an open-source, cross-platform chess GUI that aims to be powerful, customizable and easy to use.
+Requirements: Windows, the project's Node.js/pnpm version, Rust MSVC, Microsoft C++ Build Tools/Windows SDK, and WebView2.
 
-## Features
-
-- Store and analyze your games from [lichess.org](https://lichess.org) and [chess.com](https://chess.com)
-- Multi-engine analysis. Supports all UCI engines
-- Prepare a repertoire and train it with spaced repetition
-- Simple engine and database installation and management
-- Absolute or partial position search in the database
-
-<img src="https://github.com/franciscoBSalgueiro/encroisssant-site/blob/master/public/showcase.webp" />
-
-## Building from source
-
-Refer to the [Tauri documentation](https://tauri.app/start/prerequisites/) for the requirements on your platform.
-
-En-Croissant uses pnpm as the package manager for dependencies. Refer to the [pnpm install instructions](https://pnpm.io/installation) for how to install it on your platform.
-
-```bash
-git clone https://github.com/franciscoBSalgueiro/en-croissant
-cd en-croissant
-pnpm install
-pnpm build
+```powershell
+pnpm install --frozen-lockfile
+pnpm dev
 ```
 
-The built app can be found at `src-tauri/target/release`
+Open a PGN using the file-open action. Before the first Game Report, select **Select engine .exe** and point it to an extracted UCI engine executable. Download Stockfish from the [official website](https://stockfishchess.org/download/); it is not included in this repository or its installer. The application validates the UCI handshake before using the selected engine.
 
-## Donate
+With an engine configured, open Game Report, select the engine and analysis level, and run the report. Generated commentary appears at the corresponding report node. PGN export preserves human notes and adds generated commentary with a re-importable marker.
 
-If you wish to support the development of this GUI, you can do so [here](https://encroissant.org/support). All donations are greatly appreciated!
+## Privacy and scope
 
-## Contributing
+- Offline templates generate commentary. The commentary flow does not send PGN, FEN, or game positions to a service.
+- Telemetry is off by default and starts only after the user enables it in Settings.
+- Patzer is not a runtime dependency. Only a small, attributed TypeScript subset is used locally; no Patzer server, Ollama, or Docker runtime is used.
+- The Rust OpenAI client is preparation only: it has no UI, key storage, Tauri command, or automatic request path.
+- Some inherited En Croissant features may access online services only when explicitly used by the user.
 
-For contributing to this project please refer to the [Contributing guide](./CONTRIBUTING.md).
+## Validation and packaging
+
+```powershell
+pnpm test
+pnpm lint
+pnpm build-vite
+pnpm build:installer
+```
+
+`pnpm build:installer` uses the existing Tauri Windows bundler. See [implementation notes](docs/IMPLEMENTATION_NOTES.md) for the architecture and verification limits, and [license notices](docs/LICENSE_NOTICES.md) for upstream attribution.
 
 ## License
 
-This software is licensed under GPL-3.0 License.
+This fork remains licensed under GPL-3.0-only. See [LICENSE](LICENSE) and [license notices](docs/LICENSE_NOTICES.md).

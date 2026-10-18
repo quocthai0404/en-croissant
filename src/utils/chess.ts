@@ -9,6 +9,7 @@ import { ANNOTATION_INFO, isBasicAnnotation, NAG_INFO } from "./annotation";
 import { parseSanOrUci, positionFromFen } from "./chessops";
 import { harmonicMean, isPrefix, mean } from "./misc";
 import { formatScore, getAccuracy, getCPLoss, INITIAL_SCORE } from "./score";
+import { extractGeneratedComment, mergeGeneratedComment } from "@/commentary/pgnComment";
 import {
     createNode,
     defaultTree,
@@ -114,8 +115,9 @@ export function getMoveText(
             }
         }
 
-        if (opt.comments && tree.comment !== "") {
-            content += tree.comment;
+        if (opt.comments) {
+            const comment = mergeGeneratedComment(tree.comment, tree.generatedComment);
+            if (comment !== "") content += comment;
         }
         content += "} ";
 
@@ -404,7 +406,12 @@ function innerParsePGN(tokens: Token[], fen: string = INITIAL_FEN, halfMoves = 0
             }
 
             // Strip [%timestamp N] annotations (chess.com export format) from comment text
-            root.comment = comment.text.replace(/\s?\[%timestamp\s+\d+\]\s?/g, " ").trim();
+            const parsedComment = extractGeneratedComment(
+              comment.text.replace(/\s?\[%timestamp\s+\d+\]\s?/g, " ").trim(),
+              root.halfMoves,
+            );
+            root.comment = parsedComment.comment;
+            root.generatedComment = parsedComment.generatedComment;
         } else if (token.type === "ParenOpen") {
             const variation = [];
             let subvariations = 0;

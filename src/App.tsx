@@ -12,10 +12,9 @@ import { Notifications } from "@mantine/notifications";
 import { createRouter, RouterProvider } from "@tanstack/react-router";
 import { getMatches } from "@tauri-apps/plugin-cli";
 import { listen } from "@tauri-apps/api/event";
-import { attachConsole, error, info, warn } from "@tauri-apps/plugin-log";
+import { attachConsole, info, warn } from "@tauri-apps/plugin-log";
 import { getDefaultStore, useAtom, useAtomValue, useSetAtom } from "jotai";
 import { ContextMenuProvider } from "mantine-contextmenu";
-import posthog from "posthog-js";
 import { useEffect, useRef } from "react";
 import { getCurrent, onOpenUrl } from "@tauri-apps/plugin-deep-link";
 
@@ -59,13 +58,10 @@ const colorSchemeManager = localStorageColorSchemeManager({
   key: "mantine-color-scheme",
 });
 
-import { getVersion } from "@tauri-apps/api/app";
-import { ask } from "@tauri-apps/plugin-dialog";
-import { relaunch } from "@tauri-apps/plugin-process";
-import { check } from "@tauri-apps/plugin-updater";
 import ErrorComponent from "@/components/ErrorComponent";
 import { getDatabasesDir, getDocumentDir, getEnginesDir, getPuzzlesDir } from "@/utils/directories";
 import { initUserAgent } from "@/utils/http";
+import { enableTelemetry } from "@/utils/telemetry";
 import { routeTree } from "./routeTree.gen";
 
 export type Dirs = {
@@ -119,23 +115,6 @@ declare module "@tanstack/react-router" {
   }
 }
 
-const checkForUpdates = async () => {
-  try {
-    const update = await check();
-    if (update) {
-      const yes = await ask("Do you want to install the new version now?", {
-        title: "New version available",
-      });
-      if (yes) {
-        await update.downloadAndInstall();
-        await relaunch();
-      }
-    }
-  } catch (e) {
-    error(`Failed to check for updates: ${e}`);
-  }
-};
-
 const preloadReferenceDb = async (store: ReturnType<typeof getDefaultStore>) => {
   const referenceDb = store.get(referenceDbAtom);
   if (referenceDb) {
@@ -164,21 +143,10 @@ function useAppStartup() {
       const detach = await attachConsole();
       info("React app started successfully");
 
-      checkForUpdates();
-
       const store = getDefaultStore();
       const telemetryEnabled = store.get(telemetryEnabledAtom);
-
-      posthog.init("phc_kgEBtifs0EgWlrl4ROYEbnsQ1b7BS2W5BKLNyXe7f8z", {
-        api_host: "https://app.posthog.com",
-        autocapture: false,
-        capture_pageview: false,
-        capture_pageleave: false,
-        disable_session_recording: true,
-      });
-
       if (telemetryEnabled) {
-        posthog.capture("app_started", { version: await getVersion() });
+        await enableTelemetry();
       }
       const unlistenFile = await listen<string>("open-cli-file", ({ payload }) => {
         void openCommandLineFile(payload, setTabs, setActiveTab, navigateToBoard);

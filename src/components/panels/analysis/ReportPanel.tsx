@@ -3,9 +3,10 @@ import { IconZoomCheck } from "@tabler/icons-react";
 import cx from "clsx";
 import equal from "fast-deep-equal";
 import { useAtom, useAtomValue } from "jotai";
-import React, { memo, useCallback, useContext, useMemo } from "react";
+import React, { memo, useCallback, useContext, useMemo, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { useStore } from "zustand";
+import { getNodeAtPath } from "@/utils/treeReducer";
 import { commands } from "@/bindings";
 import EvalChart from "@/components/common/EvalChart";
 import ProgressButton from "@/components/common/ProgressButton";
@@ -23,14 +24,21 @@ function ReportPanel() {
 
   const store = useContext(TreeStateContext)!;
   const root = useStore(store, (s) => s.root);
+  const position = useStore(store, (s) => s.position);
+  const currentNode = getNodeAtPath(root, position);
   const [reportingMode, setReportingMode] = useAtom(currentReportModalOpenAtom);
 
   const inProgress = useStore(store, (s) => s.report.inProgress);
   const setInProgress = useStore(store, (s) => s.setReportInProgress);
+  const requestInvalidator = useRef<(() => void) | null>(null);
+  const setRequestInvalidator = useCallback((invalidate: (() => void) | null) => {
+    requestInvalidator.current = invalidate;
+  }, []);
 
   const stats = useMemo(() => getGameStats(root), [root]);
 
   const handleCancel = useCallback(() => {
+    requestInvalidator.current?.();
     commands.cancelAnalysis(`report_${activeTab}`);
   }, [activeTab]);
 
@@ -51,8 +59,17 @@ function ReportPanel() {
         reportingMode={reportingMode}
         closeReportingMode={closeReportingMode}
         setInProgress={setInProgress}
+        setRequestInvalidator={setRequestInvalidator}
       />
       <Stack mb="lg" gap="0.4rem" mr="xs">
+        {currentNode.generatedComment && (
+          <Paper withBorder p="md">
+            <Text size="xs" c="dimmed" fw={700} mb="xs">
+              Bình luận tự động
+            </Text>
+            <Text style={{ whiteSpace: "pre-wrap" }}>{currentNode.generatedComment.text}</Text>
+          </Paper>
+        )}
         <ProgressButton
           id={`report_${activeTab}`}
           redoable

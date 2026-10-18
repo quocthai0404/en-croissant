@@ -782,27 +782,38 @@ pub struct EngineConfig {
 #[specta::specta]
 pub async fn get_engine_config(path: PathBuf) -> Result<EngineConfig, Error> {
     let mut base = BaseEngine::spawn(path).await?;
+    let config = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        base.send("uci").await?;
 
-    base.send("uci").await?;
+        let mut config = EngineConfig::default();
+        let mut completed_handshake = false;
 
-    let mut config = EngineConfig::default();
+        let reader = base.reader_mut().ok_or(Error::EngineDisconnected)?;
+        while let Some(line) = reader.next_line().await? {
+            if let UciMessage::Id {
+                name: Some(name),
+                author: _,
+            } = parse_one(&line)
+            {
+                config.name = name;
+            }
+            if let UciMessage::Option(opt) = parse_one(&line) {
+                config.options.push(opt);
+            }
+            if let UciMessage::UciOk = parse_one(&line) {
+                completed_handshake = true;
+                break;
+            }
+        }
 
-    let reader = base.reader_mut().ok_or(Error::EngineDisconnected)?;
-    while let Some(line) = reader.next_line().await? {
-        if let UciMessage::Id {
-            name: Some(name),
-            author: _,
-        } = parse_one(&line)
-        {
-            config.name = name;
+        if !completed_handshake {
+            return Err(Error::EngineDisconnected);
         }
-        if let UciMessage::Option(opt) = parse_one(&line) {
-            config.options.push(opt);
-        }
-        if let UciMessage::UciOk = parse_one(&line) {
-            break;
-        }
-    }
+        Ok(config)
+    })
+    .await
+    .map_err(|_| Error::EngineHandshakeTimeout)??;
+
     println!("{:?}", config);
     base.quit().await?;
     Ok(config)

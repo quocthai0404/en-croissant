@@ -27,3 +27,9 @@ tsconfig.tsbuildinfo
 *.sw?
 
 src-tauri/gen/
+
+# Local notes and machine-specific test inputs; never publish these by accident.
+README.vi.md
+docs/TEST_RESULTS.md
+docs/DOCKER_DECISION.md
+tests/fixtures/*.pgn

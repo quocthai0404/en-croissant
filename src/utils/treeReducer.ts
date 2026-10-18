@@ -24,7 +24,15 @@ export interface TreeNode {
     shapes: DrawShape[];
     annotations: Annotation[];
     comment: string;
+    generatedComment?: GeneratedCommentMetadata;
     clock?: number;
+}
+
+export interface GeneratedCommentMetadata {
+    schemaVersion: 1;
+    gameId: string;
+    ply: number;
+    text: string;
 }
 
 export type ListNode = {

@@ -90,6 +90,9 @@ pub enum Error {
     #[error("Engine disconnected")]
     EngineDisconnected,
 
+    #[error("Engine did not complete the UCI handshake within 10 seconds")]
+    EngineHandshakeTimeout,
+
     #[error("Analysis cancelled")]
     AnalysisCancelled,
 }

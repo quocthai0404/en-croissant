@@ -30,7 +30,7 @@ function AboutModal({
     load();
   }, []);
   return (
-    <Modal centered opened={opened} onClose={() => setOpened(false)} title="En Croissant">
+    <Modal centered opened={opened} onClose={() => setOpened(false)} title="Chess Reviewer">
       <Text>Version: {info?.version}</Text>
       <Text>Tauri version: {info?.tauri}</Text>
       <Text>
@@ -39,8 +39,8 @@ function AboutModal({
 
       <br />
 
-      <Anchor href="https://www.encroissant.org" target="_blank" rel="noreferrer">
-        www.encroissant.org
+      <Anchor href="https://github.com/franciscoBSalgueiro/en-croissant" target="_blank" rel="noreferrer">
+        Built on En Croissant (GPL-3.0-only)
       </Anchor>
     </Modal>
   );

@@ -5,11 +5,10 @@ import { TauriEvent } from "@tauri-apps/api/event";
 import { Menu, MenuItem, PredefinedMenuItem, Submenu } from "@tauri-apps/api/menu";
 import { appLogDir, resolve } from "@tauri-apps/api/path";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { ask, message, open } from "@tauri-apps/plugin-dialog";
+import { ask, open } from "@tauri-apps/plugin-dialog";
 import { platform } from "@tauri-apps/plugin-os";
-import { exit, relaunch } from "@tauri-apps/plugin-process";
+import { exit } from "@tauri-apps/plugin-process";
 import { openPath, openUrl } from "@tauri-apps/plugin-opener";
-import { check } from "@tauri-apps/plugin-updater";
 import { useAtom, useAtomValue } from "jotai";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useHotkeys } from "react-hotkeys-hook";
@@ -114,21 +113,6 @@ function RootLayout() {
     });
   }, [navigate, setActiveTab, setTabs, t]);
 
-  const checkForUpdates = useCallback(async () => {
-    const update = await check();
-    if (update) {
-      const yes = await ask("Do you want to install the new version now?", {
-        title: "New version available",
-      });
-      if (yes) {
-        await update.downloadAndInstall();
-        await relaunch();
-      }
-    } else {
-      await message("No updates available");
-    }
-  }, []);
-
   const openSettings = useCallback(async () => {
     navigate({ to: "/settings" });
   }, [navigate]);
@@ -153,12 +137,6 @@ function RootLayout() {
     action: () => setOpened(true),
   };
 
-  const checkForUpdatesOption = {
-    label: t("Menu.Help.CheckUpdate"),
-    id: "check_for_updates",
-    action: checkForUpdates,
-  };
-
   const appMenu: MenuGroup = {
     label: "Application Menu",
     options: [
@@ -169,7 +147,6 @@ function RootLayout() {
         id: aboutOption.id,
         action: aboutOption.action,
       },
-      checkForUpdatesOption,
       { label: "divider" },
       {
         label: t("SideBar.Settings") + "...",
@@ -308,11 +285,11 @@ function RootLayout() {
             },
           },
           { label: "divider" },
-          ...(!isMacOS ? [checkForUpdatesOption, aboutOption] : []),
+          ...(!isMacOS ? [aboutOption] : []),
         ],
       },
     ],
-    [t, checkForUpdates, createNewTab, keyMap, openNewFile, toggleFullscreen],
+    [t, createNewTab, keyMap, openNewFile, toggleFullscreen],
   );
 
   const { data: menu } = useSWRImmutable(["menu", menuActions], () => createMenu(menuActions));

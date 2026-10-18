@@ -12,6 +12,7 @@ mod game;
 mod fs;
 mod lexer;
 mod oauth;
+mod openai_commentary;
 mod opening;
 mod pgn;
 mod progress;
@@ -210,7 +211,7 @@ fn main() {
     let log_targets = [
         TargetKind::Stdout,
         TargetKind::LogDir {
-            file_name: Some(String::from("en-croissant.log")),
+            file_name: Some(String::from("chess-reviewer.log")),
         },
     ];
 
@@ -264,10 +265,6 @@ fn main() {
 
             #[cfg(desktop)]
             app.handle().plugin(tauri_plugin_cli::init())?;
-
-            #[cfg(desktop)]
-            app.handle()
-                .plugin(tauri_plugin_updater::Builder::new().build())?;
 
             log::info!("Finished rust initialization");
 
