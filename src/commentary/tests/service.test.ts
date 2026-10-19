@@ -16,6 +16,8 @@ import { resolveViewerSide } from "../perspective";
 import { buildDiagnosticReportData, formatDiagnosticMarkdown } from "@/utils/diagnosticReport";
 import { buildReviewEvidence } from "@/review/evidence";
 import { buildExplainPresentation } from "@/review/explain";
+import { buildMoveCoachSummary } from "@/review/coach";
+import { getMainLine } from "@/utils/chess";
 
 // Minimal mainline only; keep the regression case reproducible without publishing a raw PGN.
 const goldenMoves = `1. e4 d5 2. exd5 c6 3. dxc6 Nxc6 4. Bb5 Bd7 5. Nf3 Nf6 6. O-O g6
@@ -232,8 +234,22 @@ describe("deterministic move commentary", () => {
     analysis[45] = analysisAt("Bxb2", -620, 30);
     analysis[46] = analysisAt("Rb1", -480, 30);
     const evidence = buildReviewEvidence(root, "fixture-review", analysis, Array(48).fill(null));
+    expect(getMainLine(root)).toHaveLength(48);
+    expect(evidence.records).toHaveLength(48);
+    expect(new Set(evidence.records.map((record) => record.moveId)).size).toBe(48);
+    expect(evidence.records.every((record) => record.position.length === record.mainlinePly)).toBe(true);
+    const coachSummaries = evidence.records.map(buildMoveCoachSummary);
+    expect(coachSummaries).toHaveLength(48);
+    coachSummaries.forEach((summary, index) => {
+      expect(summary.move).toBe(evidence.records[index]?.san);
+      expect(summary.classification).not.toBe("");
+      expect(summary.phrase).not.toBe("");
+      expect(summary.evaluation).not.toBe("–");
+    });
     const c4 = evidence.records.find((record) => record.mainlinePly === 45)!;
     const bxb2 = evidence.records.find((record) => record.mainlinePly === 46)!;
+    expect(buildMoveCoachSummary(c4).pieceGlyph).toBe("♙");
+    expect(buildMoveCoachSummary(bxb2).pieceGlyph).toBe("♝");
     const c4Explain = buildExplainPresentation(c4, evidence.records, "white");
     const captureExplain = buildExplainPresentation(bxb2, evidence.records, "white");
 

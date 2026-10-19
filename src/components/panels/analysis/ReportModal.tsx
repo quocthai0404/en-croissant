@@ -173,23 +173,32 @@ function ReportModal({
     const fingerprint = capabilities
       ? getBenchmarkFingerprint(engine.path, engineIdentity, capabilities)
       : `${engine.path.toLowerCase()}|${engineIdentity.toLowerCase()}|fallback`;
+    const threadRange = spinOptionRange(config, "Threads");
+    const threadCandidates = getThreadCandidates(
+      capabilities?.logicalCores ?? 1,
+      threadRange?.max ?? 1,
+      threadRange?.min ?? 1,
+    );
+    const maxAutoThreads = threadCandidates.at(-1) ?? 1;
     let benchmark: BenchmarkSnapshot | undefined = (form.values.benchmarks ?? {})[fingerprint];
     let benchmarkStatus: "matched" | "fallback" | "manual" | "not-applicable" = "not-applicable";
 
     if (form.values.profile === "auto") {
       if (!forceBenchmark && benchmark) {
+        const safeThreads = chooseBenchmarkThreads(benchmark.result, maxAutoThreads) ??
+          Math.min(benchmark.threads, maxAutoThreads);
+        if (safeThreads !== benchmark.threads) {
+          benchmark = { ...benchmark, threads: safeThreads };
+          const nextBenchmarks = { ...(form.values.benchmarks ?? {}), [fingerprint]: benchmark };
+          form.setFieldValue("benchmarks", nextBenchmarks);
+          setReportSettings((previous) => ({ ...previous, ...form.values, benchmarks: nextBenchmarks }));
+        }
         benchmarkStatus = "matched";
       } else if (capabilities) {
         setBenchmarking(true);
         try {
-          const threadRange = spinOptionRange(config, "Threads");
-          const candidates = getThreadCandidates(
-            capabilities.logicalCores,
-            threadRange?.max ?? 1,
-            threadRange?.min ?? 1,
-          );
           const hashMb = getAutoHashMb(capabilities);
-          const result = unwrap(await commands.benchmarkEngine(`report_${tab}`, engine.path, candidates, hashMb));
+          const result = unwrap(await commands.benchmarkEngine(`report_${tab}`, engine.path, threadCandidates, hashMb));
           const threads = chooseBenchmarkThreads(result);
           if (threads === null) throw new Error("Engine benchmark returned no usable throughput samples.");
           const hashRange = spinOptionRange(config, "Hash");
@@ -229,12 +238,6 @@ function ReportModal({
     }
 
     const autoHash = capabilities ? getAutoHashMb(capabilities) : 64;
-    const threadRange = spinOptionRange(config, "Threads");
-    const threadCandidates = getThreadCandidates(
-      capabilities?.logicalCores ?? 1,
-      threadRange?.max ?? 1,
-      threadRange?.min ?? 1,
-    );
     const configuredThreads = Number(engine.settings?.find((setting) => setting.name.toLowerCase() === "threads")?.value) || 1;
     const configuredHash = Number(engine.settings?.find((setting) => setting.name.toLowerCase() === "hash")?.value) || 64;
     const requestedThreads = form.values.profile === "custom"

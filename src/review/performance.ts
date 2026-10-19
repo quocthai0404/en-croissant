@@ -35,7 +35,7 @@ export function getThreadCandidates(
   minThreads = 1,
 ): number[] {
   const cores = Math.max(1, Math.floor(logicalCores));
-  const reserved = cores <= 8 ? 1 : 2;
+  const reserved = cores <= 8 ? 1 : Math.max(2, Math.ceil(cores * 0.25));
   const usable = Math.max(1, cores - reserved);
   const minimum = Math.max(1, Math.floor(minThreads));
   const maximum = Math.max(minimum, Math.floor(maxThreads));
@@ -82,8 +82,13 @@ export function getBenchmarkFingerprint(
   ].join("|");
 }
 
-export function chooseBenchmarkThreads(result: EngineBenchmarkResult): number | null {
-  const candidates = result.candidates.filter((candidate) => candidate.threads > 0 && candidate.medianNps > 0);
+export function chooseBenchmarkThreads(
+  result: EngineBenchmarkResult,
+  maxThreads = Number.MAX_SAFE_INTEGER,
+): number | null {
+  const candidates = result.candidates.filter((candidate) =>
+    candidate.threads > 0 && candidate.threads <= maxThreads && candidate.medianNps > 0,
+  );
   if (candidates.length === 0) return null;
   const peak = Math.max(...candidates.map((candidate) => candidate.medianNps));
   return candidates
@@ -93,7 +98,10 @@ export function chooseBenchmarkThreads(result: EngineBenchmarkResult): number | 
 
 export function profileBudgetMs(profile: ReviewProfile, mainlinePlyCount: number): number | null {
   if (profile === "custom") return null;
-  const typicalBudget = profile === "fast" ? 30_000 : profile === "deep" ? 300_000 : 90_000;
+  const typicalBudget = profile === "fast" ? 30_000
+    : profile === "auto" ? 60_000
+      : profile === "deep" ? 300_000
+        : 90_000;
   const scale = Math.min(1.25, Math.max(0.25, mainlinePlyCount / 80));
   return Math.round(typicalBudget * scale);
 }

@@ -39,8 +39,8 @@ import { type CommentaryPerspective, resolveViewerSide } from "@/commentary/pers
 import { buildExplainPresentation } from "@/review/explain";
 import { isReviewEvidenceCurrent } from "@/review/evidence";
 import { classificationGlyph, classificationLabel } from "@/review/classification";
+import { buildMoveCoachSummary, findReviewRecordAtPosition, getReviewRowScrollTop } from "@/review/coach";
 import type { ReviewEvidenceRecord } from "@/review/types";
-import { formatScore } from "@/utils/score";
 import classes from "./AnalysisPanel.module.css";
 import ReportModal from "./ReportModal";
 
@@ -78,7 +78,25 @@ function ReportPanel() {
   const mainline = useMemo(() => getMainLine(root), [root]);
   const evidenceIsCurrent = isReviewEvidenceCurrent(evidence, root.fen, mainline);
   const records = evidenceIsCurrent ? evidence.records : EMPTY_REVIEW_RECORDS;
+  const selectedRecord = findReviewRecordAtPosition(records, position);
   const viewerSide = resolveViewerSide(commentaryPerspective, headers, sessions);
+  const reviewRowElements = useRef(new Map<string, HTMLDivElement>());
+  const reviewListViewport = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!selectedRecord) return;
+    const viewport = reviewListViewport.current;
+    const row = reviewRowElements.current.get(selectedRecord.moveId);
+    if (!viewport || !row) return;
+
+    const viewportRect = viewport.getBoundingClientRect();
+    const rowRect = row.getBoundingClientRect();
+    viewport.scrollTop = getReviewRowScrollTop(
+      viewport.scrollTop,
+      { top: viewportRect.top, bottom: viewportRect.bottom },
+      { top: rowRect.top, bottom: rowRect.bottom },
+    );
+  }, [selectedRecord]);
 
   useEffect(() => {
     if (!explainRecord || (explainBoardPath && position.join(".") !== explainBoardPath.join("."))) {
@@ -169,6 +187,55 @@ function ReportPanel() {
       </Group>
       <ScrollArea offsetScrollbars flex={1} mih={0}>
       <Stack mb="lg" gap="xs" mr="xs" px="xs">
+        <MoveCoachCard record={selectedRecord} hasReview={records.length > 0} />
+        <Group justify="space-between" mt="xs">
+          <Text fw={700}>Move Review</Text>
+          <Select
+            w={150}
+            aria-label="Explain perspective"
+            data={[
+              { value: "auto", label: "Auto" },
+              { value: "white", label: "White" },
+              { value: "black", label: "Black" },
+              { value: "neutral", label: "Neutral" },
+            ]}
+            value={commentaryPerspective}
+            onChange={changeCommentaryPerspective}
+          />
+        </Group>
+        <Text size="xs" c="dimmed">Select a move to update Coach; Explain opens the deeper analysis.</Text>
+        {records.length > 0 ? (
+          <Paper withBorder style={{ overflow: "hidden" }}>
+            <ScrollArea
+              h={Math.min(400, Math.max(180, records.length * 43))}
+              viewportRef={reviewListViewport}
+            >
+              <Stack gap={0}>
+                {records.map((record) => (
+                  <ReviewMoveRow
+                    key={record.moveId}
+                    record={record}
+                    selected={selectedRecord?.moveId === record.moveId}
+                    elementRef={(element) => {
+                      if (element) reviewRowElements.current.set(record.moveId, element);
+                      else reviewRowElements.current.delete(record.moveId);
+                    }}
+                    onSelect={() => {
+                      setExplainRecord(null);
+                      setExplainOverlay([]);
+                      goToMove(record.position);
+                    }}
+                    onExplain={() => openExplain(record)}
+                  />
+                ))}
+              </Stack>
+            </ScrollArea>
+          </Paper>
+        ) : (
+          <Alert icon={<IconInfoCircle size="1rem" />} color="gray" title="No current review evidence">
+            Generate Game Review to classify moves and enable local Explain. Existing NAGs and comments remain unchanged.
+          </Alert>
+        )}
         {stats.whiteAccuracy > 0 && stats.blackAccuracy > 0 && (
           <Group grow>
             <AccuracyCard
@@ -201,46 +268,6 @@ function ReportPanel() {
             </Text>
           </Paper>
         )}
-        <Group justify="space-between" mt="xs">
-          <Text fw={700}>Move Review</Text>
-          <Select
-            w={150}
-            aria-label="Explain perspective"
-            data={[
-              { value: "auto", label: "Auto" },
-              { value: "white", label: "White" },
-              { value: "black", label: "Black" },
-              { value: "neutral", label: "Neutral" },
-            ]}
-            value={commentaryPerspective}
-            onChange={changeCommentaryPerspective}
-          />
-        </Group>
-        {records.length > 0 ? (
-          <Paper withBorder style={{ overflow: "hidden" }}>
-            <ScrollArea h={Math.min(330, Math.max(150, records.length * 43))}>
-              <Stack gap={0}>
-                {records.map((record) => (
-                  <ReviewMoveRow
-                    key={record.moveId}
-                    record={record}
-                    selected={position.join(".") === record.position.join(".")}
-                    onSelect={() => {
-                      setExplainRecord(null);
-                      setExplainOverlay([]);
-                      goToMove(record.position);
-                    }}
-                    onExplain={() => openExplain(record)}
-                  />
-                ))}
-              </Stack>
-            </ScrollArea>
-          </Paper>
-        ) : (
-          <Alert icon={<IconInfoCircle size="1rem" />} color="gray" title="No current review evidence">
-            Generate Game Review to classify moves and enable local Explain. Existing NAGs and comments remain unchanged.
-          </Alert>
-        )}
         {currentNode.generatedComment && (
           <Accordion variant="contained">
             <Accordion.Item value="legacy">
@@ -271,22 +298,17 @@ function ReportPanel() {
 function ReviewMoveRow({
   record,
   selected,
+  elementRef,
   onSelect,
   onExplain,
 }: {
   record: ReviewEvidenceRecord;
   selected: boolean;
+  elementRef: (element: HTMLDivElement | null) => void;
   onSelect: () => void;
   onExplain: () => void;
 }) {
-  const pieceGlyphs: Record<ReviewEvidenceRecord["piece"], { white: string; black: string }> = {
-    p: { white: "♙", black: "♟" },
-    n: { white: "♘", black: "♞" },
-    b: { white: "♗", black: "♝" },
-    r: { white: "♖", black: "♜" },
-    q: { white: "♕", black: "♛" },
-    k: { white: "♔", black: "♚" },
-  };
+  const summary = buildMoveCoachSummary(record);
   const color = {
     book: "blue",
     brilliant: "cyan",
@@ -298,26 +320,81 @@ function ReviewMoveRow({
     blunder: "red",
     unclassified: "gray",
   }[record.classification];
-  const evaluation = record.afterScore ? formatScore(record.afterScore.value) : "–";
-  const moveNumber = Math.ceil(record.mainlinePly / 2);
-  const moveLabel = record.mainlinePly % 2 ? `${moveNumber}.` : `${moveNumber}...`;
-
   return (
-    <Group gap={0} wrap="nowrap" px="xs" py={5} style={{ borderBottom: "1px solid var(--mantine-color-dark-4)", background: selected ? "var(--mantine-color-dark-5)" : undefined }}>
-      <UnstyledButton onClick={onSelect} style={{ flex: 1, minWidth: 0 }} aria-label={`Select ${moveLabel}${record.san}, ${classificationLabel(record.classification)}, evaluation ${evaluation}`}>
+    <Group
+      ref={elementRef}
+      gap={0}
+      wrap="nowrap"
+      px="xs"
+      py={5}
+      data-review-move-id={record.moveId}
+      style={{ borderBottom: "1px solid var(--mantine-color-dark-4)", background: selected ? "var(--mantine-color-dark-5)" : undefined }}
+    >
+      <UnstyledButton onClick={onSelect} style={{ flex: 1, minWidth: 0 }} aria-label={`Select ${summary.moveNumber}${record.san}, ${summary.classification}, evaluation ${summary.evaluation}`}>
         <Group gap="xs" wrap="nowrap">
         <Tooltip label={`${classificationLabel(record.classification)} · depth ${record.beforeDepth ?? "–"}/${record.afterDepth ?? "–"}`}>
           <Badge w={28} variant="light" color={color} px={2}>{classificationGlyph(record.classification)}</Badge>
         </Tooltip>
-        <Text size="xs" c="dimmed" w={38}>{moveLabel}</Text>
-        <Text size="lg" c={record.mover === "white" ? "gray.2" : "dark.1"} w={22}>{pieceGlyphs[record.piece][record.mover]}</Text>
-        <Text fw={700} flex={1}>{record.san}</Text>
-        <Badge variant="light" color={color} visibleFrom="sm">{classificationLabel(record.classification)}</Badge>
-        <Text size="sm" w={54} ta="right" ff="monospace">{evaluation}</Text>
+        <Text size="xs" c="dimmed" w={42}>{summary.moveNumber}</Text>
+        <Text size="lg" c={record.mover === "white" ? "gray.2" : "dark.1"} w={22}>{summary.pieceGlyph}</Text>
+        <Text fw={700} flex={1}>{summary.move}</Text>
+        <Badge size="xs" variant="light" color={color}>{summary.classification}</Badge>
+        <Text size="sm" w={54} ta="right" ff="monospace">{summary.evaluation}</Text>
         </Group>
       </UnstyledButton>
       <Button size="compact-xs" variant="subtle" onClick={onExplain}>Explain</Button>
     </Group>
+  );
+}
+
+function MoveCoachCard({
+  record,
+  hasReview,
+}: {
+  record: ReviewEvidenceRecord | undefined;
+  hasReview: boolean;
+}) {
+  if (!record) {
+    return (
+      <Paper withBorder p="sm" role="status" aria-live="polite">
+        <Text size="xs" fw={700} c="dimmed">MOVE COACH</Text>
+        <Text c="dimmed" mt={4}>
+          {hasReview ? "Select a move below to see its short review." : "Generate Game Review to see a short review for every move."}
+        </Text>
+      </Paper>
+    );
+  }
+
+  const summary = buildMoveCoachSummary(record);
+  const color = {
+    book: "blue",
+    brilliant: "cyan",
+    best: "teal",
+    excellent: "green",
+    good: "lime",
+    inaccuracy: "yellow",
+    mistake: "orange",
+    blunder: "red",
+    unclassified: "gray",
+  }[record.classification];
+
+  return (
+    <Paper withBorder p="sm" role="status" aria-live="polite" aria-label="Selected move Coach">
+      <Text size="xs" fw={700} c="dimmed">MOVE COACH · {summary.moveNumber}</Text>
+      <Group justify="space-between" wrap="nowrap" mt={4}>
+        <Group gap="xs" wrap="nowrap" miw={0}>
+          <Text size="xl" c={record.mover === "white" ? "gray.2" : "dark.1"}>{summary.pieceGlyph}</Text>
+          <Stack gap={0} miw={0}>
+            <Group gap="xs" wrap="wrap">
+              <Text fw={700} size="lg">{summary.move}</Text>
+              <Badge size="xs" variant="light" color={color}>{summary.classification}</Badge>
+            </Group>
+            <Text size="sm">{summary.phrase}</Text>
+          </Stack>
+        </Group>
+        <Text fw={700} size="lg" ff="monospace">{summary.evaluation}</Text>
+      </Group>
+    </Paper>
   );
 }
 
