@@ -3,7 +3,7 @@
 ## Sources and licenses
 
 - Chess Reviewer is adapted from En Croissant `0.15.1`, commit `a91f32b1c57eb93acad92f9778205eac7b4345d9`, licensed GPL-3.0-only.
-- The Windows x64 installer bundles Stockfish `19` from the official `sf_19` release. The build script verifies the archived asset with SHA-256 `3c8bf1f9ea66a09350a40df4f632288285ac206d99f33ab5842c408fc30b48a7` before including `stockfish.exe` as a Tauri resource.
+- The Windows x64 installer bundles Stockfish `19` from the official `sf_19` release. The macOS DMG bundles Stockfish `19`'s universal Intel + Apple Silicon binary from the same official release. The build script verifies the Windows archive with SHA-256 `3c8bf1f9ea66a09350a40df4f632288285ac206d99f33ab5842c408fc30b48a7` and the macOS archive with SHA-256 `a1f0e3bcc5a6927a11fe6fc8e54a779754645f3c2bae2cf13420fd1957adaa77` before packaging.
 - Patzer `7.18.1`, commit `f21b32c81189c10a318397076cbd015f5b458973`, is MIT licensed and was audited as source material only. Its server, web bundle, Docker configuration, and models are not runtime dependencies.
 - `src/commentary/vendor/patzer-tactics.ts` is a selected, attributed adaptation of `server/src/coach/tactics.ts`. Its motifs are candidates, never proof of a material win. `chess.js` `1.4.0` validates chess rules.
 
@@ -35,6 +35,6 @@ The request includes no PGN. A response is rejected if its JSON, fact IDs, SAN, 
 
 ## Fork behavior and verification limit
 
-The Tauri product uses the `ChessReview` binary name and identifier. The upstream updater key and endpoint are removed so this fork cannot download upstream binaries. The NSIS target uses a current-user installer with an offline WebView2 installer, Start Menu shortcut, and uninstaller. The build post-step writes `ChessReview_1.0.0_Setup.exe`. Stockfish is included as a resource and is registered automatically after its UCI handshake succeeds. Docker is intentionally not used for this Windows GUI.
+The Tauri product uses the `ChessReview` binary name and identifier. The upstream updater key and endpoint are removed so this fork cannot download upstream binaries. The Windows NSIS target uses a current-user installer with the WebView2 bootstrapper, Start Menu shortcut, and uninstaller. The build post-step writes `ChessReview_1.0.0_Setup.exe`. The macOS target builds a universal `.dmg`; its app is not Developer ID signed or notarized. Each platform includes its matching Stockfish binary as a bundled resource, registered automatically after its UCI handshake succeeds. Docker is intentionally not used for the desktop GUI.
 
-The native Tauri build could not be completed in this environment because the Windows MSVC toolchain is missing `msvcrt.lib`. End-to-end GUI review with Stockfish, installer generation, and clean-machine installation still require verification on a machine with a complete MSVC toolchain.
+The local native Windows Tauri build could not be completed in this environment because the Windows MSVC toolchain is missing `msvcrt.lib`. GitHub Actions is configured to build Windows NSIS and universal macOS DMG artifacts on their native hosted runners. End-to-end GUI review and clean-machine installation still require testing on both operating systems; a successful CI bundle build alone does not establish installed-app verification.

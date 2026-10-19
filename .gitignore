@@ -35,6 +35,7 @@ docs/DOCKER_DECISION.md
 docs/commentary_v2_*.md
 tests/fixtures/*.pgn
 
-# Downloaded only for the Windows installer build; do not commit a release binary.
+# Downloaded by platform release builds; do not commit release binaries.
 src-tauri/resources/stockfish/stockfish.exe
+src-tauri/resources/stockfish/stockfish-macos
 src-tauri/resources/.stockfish-download/

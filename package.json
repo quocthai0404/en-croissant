@@ -11,6 +11,7 @@
     "prepare:stockfish": "node scripts/prepare-stockfish.mjs",
     "rename:installer": "node scripts/rename-installer.mjs",
     "build:installer": "pnpm prepare:stockfish && tauri build --bundles nsis && pnpm rename:installer",
+    "build:mac-dmg": "pnpm prepare:stockfish && tauri build --bundles dmg --target universal-apple-darwin",
     "dev": "tauri dev",
     "tauri": "tauri",
     "format": "oxfmt",

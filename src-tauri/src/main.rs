@@ -111,12 +111,17 @@ async fn close_splashscreen(window: Window) -> Result<(), String> {
 #[tauri::command]
 #[specta::specta]
 fn get_bundled_engine_path(app: tauri::AppHandle) -> Result<String, String> {
+    let engine_resource = if cfg!(target_os = "windows") {
+        "stockfish/stockfish.exe"
+    } else if cfg!(target_os = "macos") {
+        "stockfish/stockfish-macos"
+    } else {
+        return Err("A bundled Stockfish engine is not configured for this platform.".to_string());
+    };
+
     let path = app
         .path()
-        .resolve(
-            "stockfish/stockfish.exe",
-            tauri::path::BaseDirectory::Resource,
-        )
+        .resolve(engine_resource, tauri::path::BaseDirectory::Resource)
         .map_err(|error| format!("Could not resolve bundled Stockfish: {error}"))?;
 
     if !path.is_file() {

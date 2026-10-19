@@ -8,7 +8,7 @@
       "digestAlgorithm": "sha256",
       "timestampUrl": "",
       "webviewInstallMode": {
-        "type": "offlineInstaller"
+        "type": "downloadBootstrapper"
       },
       "nsis": {
         "installMode": "currentUser",
@@ -45,7 +45,7 @@
       "../sound/": "sound/",
       "../LICENSE": "LICENSE",
       "../docs/LICENSE_NOTICES.md": "LICENSE_NOTICES.md",
-      "resources/stockfish/stockfish.exe": "stockfish/stockfish.exe"
+      "resources/stockfish/*": "stockfish/"
     },
     "targets": ["nsis"]
   },

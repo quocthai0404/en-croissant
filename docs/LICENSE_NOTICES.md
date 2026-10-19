@@ -36,7 +36,7 @@ SOFTWARE.
 
 ## Stockfish
 
-The Windows installer bundles Stockfish 19 from the official Stockfish release. Stockfish is licensed under GPL-3.0-or-later. Its source and license information are available from the [official Stockfish repository](https://github.com/official-stockfish/Stockfish). Redistribution of this application must continue to satisfy the GPL obligations that apply to both En Croissant and Stockfish.
+The Windows installer and macOS DMG bundle Stockfish 19 binaries from the official Stockfish release. Stockfish is licensed under GPL-3.0-or-later. Its source and license information are available from the [official Stockfish repository](https://github.com/official-stockfish/Stockfish). Redistribution of this application must continue to satisfy the GPL obligations that apply to both En Croissant and Stockfish.
 
 ## chess.js
 

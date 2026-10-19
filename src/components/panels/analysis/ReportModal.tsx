@@ -11,6 +11,7 @@ import { commands, type EngineConfig, type GoMode } from "@/bindings";
 import { TreeStateContext } from "@/components/common/TreeStateContext";
 import { enginesAtom, referenceDbAtom } from "@/state/atoms";
 import { type LocalEngine, requiredEngineSettings } from "@/utils/engines";
+import { usePlatform } from "@/utils/files";
 import { getReviewFactsForGame } from "@/commentary/service";
 import { getStableGameId } from "@/commentary/types";
 import { getTreeStructureHash } from "@/utils/treeReducer";
@@ -86,6 +87,7 @@ function ReportModal({
   setRequestInvalidator: (invalidate: (() => void) | null) => void;
 }) {
   const { t } = useTranslation();
+  const { os } = usePlatform();
 
   const referenceDb = useAtomValue(referenceDbAtom);
   const engines = useAtomValue(enginesAtom);
@@ -111,7 +113,7 @@ function ReportModal({
     try {
       const selected = await open({
         multiple: false,
-        filters: [{ name: "UCI engine executable", extensions: ["exe"] }],
+        filters: os === "windows" ? [{ name: "UCI engine executable", extensions: ["exe"] }] : [],
       });
       if (typeof selected !== "string") return;
 
@@ -479,7 +481,7 @@ function ReportModal({
                 bị thiếu, hoặc chọn một UCI engine khác bên dưới.
               </Text>
               <Button type="button" mt="sm" size="xs" loading={addingEngine} onClick={chooseLocalEngine}>
-                Chọn tệp engine .exe
+                Chọn tệp Stockfish/UCI
               </Button>
             </Alert>
           )}

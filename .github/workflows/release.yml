@@ -1,4 +1,4 @@
-name: Windows Installer Release
+name: Desktop Release
 
 on:
   push:
@@ -44,7 +44,7 @@ jobs:
       - name: Build the self-contained NSIS installer
         run: pnpm build:installer
 
-      - name: Verify installer output
+      - name: Verify installer and bundled Stockfish
         shell: pwsh
         run: |
           $engine = Get-Item "src-tauri/resources/stockfish/stockfish.exe"
@@ -61,29 +61,122 @@ jobs:
           }
           Write-Output "Installer ready: $($file.FullName) ($($file.Length) bytes)"
 
-      - name: Upload installer artifact
+      - name: Upload Windows installer artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ChessReview_1.0.0_Setup-${{ github.ref_name }}
+          name: windows-installer
           path: src-tauri/target/release/bundle/nsis/ChessReview_1.0.0_Setup.exe
           if-no-files-found: error
           retention-days: 30
 
-      - name: Publish or update GitHub prerelease
-        shell: pwsh
+  macos-dmg:
+    runs-on: macos-latest
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "lts/*"
+          cache: pnpm
+
+      - name: Set up Rust with Intel and Apple Silicon targets
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Cache Rust build
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+
+      - name: Install app dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build universal macOS DMG with bundled Stockfish
+        run: pnpm build:mac-dmg
+
+      - name: Verify DMG, universal app, and Stockfish UCI startup
+        shell: bash
+        run: |
+          set -euo pipefail
+          dmg_dir="src-tauri/target/universal-apple-darwin/release/bundle/dmg"
+          dmg="$(find "$dmg_dir" -maxdepth 1 -type f -name '*.dmg' -print -quit)"
+          if [[ -z "$dmg" ]]; then
+            echo "No universal DMG was produced in $dmg_dir" >&2
+            exit 1
+          fi
+          if [[ "$(stat -f%z "$dmg")" -lt 50000000 ]]; then
+            echo "DMG is unexpectedly small: $dmg" >&2
+            exit 1
+          fi
+
+          hdiutil verify "$dmg"
+          mountpoint="$RUNNER_TEMP/chessreview-dmg"
+          mkdir -p "$mountpoint"
+          hdiutil attach -quiet -nobrowse -readonly -mountpoint "$mountpoint" "$dmg"
+          cleanup() {
+            hdiutil detach "$mountpoint" -quiet || true
+          }
+          trap cleanup EXIT
+
+          app="$mountpoint/ChessReview.app"
+          app_binary="$app/Contents/MacOS/ChessReview"
+          engine="$app/Contents/Resources/stockfish/stockfish-macos"
+          test -x "$app_binary"
+          test -x "$engine"
+          lipo -verify_arch arm64 x86_64 "$app_binary"
+          lipo -verify_arch arm64 x86_64 "$engine"
+          uci_output="$("$engine" <<'EOF'
+          uci
+          quit
+          EOF
+          )"
+          printf '%s\n' "$uci_output" | grep -q '^uciok$'
+          echo "Verified universal macOS app and bundled Stockfish: $dmg"
+
+      - name: Upload universal macOS DMG artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-universal-dmg
+          path: src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
+          if-no-files-found: error
+          retention-days: 30
+
+  publish-release:
+    runs-on: ubuntu-latest
+    needs:
+      - windows-installer
+      - macos-dmg
+    steps:
+      - name: Download Windows installer
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-installer
+          path: artifacts/windows
+
+      - name: Download macOS DMG
+        uses: actions/download-artifact@v4
+        with:
+          name: macos-universal-dmg
+          path: artifacts/macos
+
+      - name: Publish or update GitHub prerelease with both installers
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          $title = "ChessReview $env:RELEASE_TAG"
-          $notes = "Beta release for Windows. Download ChessReview_1.0.0_Setup.exe from Assets. Please report issues before general release."
-          gh release view $env:RELEASE_TAG --repo $env:GH_REPO *> $null
-          if ($LASTEXITCODE -ne 0) {
-            gh release create $env:RELEASE_TAG --repo $env:GH_REPO --title $title --notes $notes --prerelease --verify-tag
-            if ($LASTEXITCODE -ne 0) { throw "Could not create GitHub prerelease for $env:RELEASE_TAG" }
-          }
-          gh release upload $env:RELEASE_TAG "src-tauri/target/release/bundle/nsis/ChessReview_1.0.0_Setup.exe" --repo $env:GH_REPO --clobber
-          if ($LASTEXITCODE -ne 0) { throw "Could not upload installer to GitHub prerelease $env:RELEASE_TAG" }
-          gh release edit $env:RELEASE_TAG --repo $env:GH_REPO --title $title --notes $notes --prerelease --draft=false
-          if ($LASTEXITCODE -ne 0) { throw "Could not publish GitHub prerelease $env:RELEASE_TAG" }
+          title="ChessReview $RELEASE_TAG"
+          notes="Beta installers for Windows and macOS. Download ChessReview_1.0.0_Setup.exe for Windows or the universal macOS DMG from Assets. The macOS beta is not notarized; Gatekeeper may require Control-click > Open on first launch. Please report issues before general release."
+          if ! gh release view "$RELEASE_TAG" --repo "$GH_REPO" >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" --repo "$GH_REPO" --title "$title" --notes "$notes" --prerelease --verify-tag
+          fi
+          gh release upload "$RELEASE_TAG" artifacts/windows/*.exe artifacts/macos/*.dmg --repo "$GH_REPO" --clobber
+          gh release edit "$RELEASE_TAG" --repo "$GH_REPO" --title "$title" --notes "$notes" --prerelease --draft=false
