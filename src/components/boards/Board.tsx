@@ -26,6 +26,7 @@ import {
   autoPromoteAtom,
   bestMovesFamily,
   currentEvalOpenAtom,
+  currentExplainOverlayAtom,
   currentShowCommentsAtom,
   currentTabAtom,
   deckAtomFamily,
@@ -163,6 +164,7 @@ function Board({
   const keyMap = useAtomValue(keyMapAtom);
   useHotkeys(keyMap.SWAP_ORIENTATION.keys, () => toggleOrientation());
   const currentTab = useAtomValue(currentTabAtom);
+  const explainOverlay = useAtomValue(currentExplainOverlayAtom);
   const tabFile = getTabFile(currentTab);
   const [evalOpen, setEvalOpen] = useAtom(currentEvalOpenAtom);
 
@@ -316,6 +318,9 @@ function Board({
 
   if (currentNode.shapes.length > 0) {
     shapes = shapes.concat(currentNode.shapes);
+  }
+  if (explainOverlay.length > 0) {
+    shapes = shapes.concat(explainOverlay);
   }
 
   const hasClock =
@@ -591,6 +596,18 @@ function Board({
                       key: "v",
                       color: "#9b59b6",
                       opacity: 0.8,
+                      lineWidth: 10,
+                    },
+                    explain: {
+                      key: "e",
+                      color: "#28a8a0",
+                      opacity: 0.9,
+                      lineWidth: 10,
+                    },
+                    explainSquare: {
+                      key: "x",
+                      color: "#f2b84b",
+                      opacity: 0.42,
                       lineWidth: 10,
                     },
                   } as unknown as DrawBrushes,

@@ -5,6 +5,7 @@ import type { Outcome, Score } from "@/bindings";
 import type { Annotation } from "./annotation";
 import type { CommentaryPerspective } from "@/commentary/perspective";
 import type { CommentaryPlan } from "@/commentary/types";
+import type { ReviewEvidenceSnapshot } from "@/review/types";
 import { positionFromFen } from "./chessops";
 
 export interface TreeState {
@@ -215,4 +216,5 @@ export function getTreeStructureHash(node: TreeNode): string {
 
 export interface ReportState {
     inProgress: boolean;
+    evidence?: ReviewEvidenceSnapshot;
 }

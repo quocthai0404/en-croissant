@@ -28,6 +28,7 @@ import {
     masterOptionsSchema,
 } from "@/utils/lichess/explorer";
 import { getWinChance, normalizeScore } from "@/utils/score";
+import type { DrawShape } from "@lichess-org/chessground/draw";
 import { genID, type Tab, tabSchema } from "@/utils/tabs";
 import { getEnginesDir } from "../utils/directories";
 import type { Session } from "../utils/session";
@@ -375,7 +376,7 @@ export const currentShowCommentsAtom = tabValue(showCommentsFamily);
 const showVariationsFamily = atomFamily((_tab: string) => atom(true));
 export const currentShowVariationsAtom = tabValue(showVariationsFamily);
 
-export const tabFamily = atomFamily((_tab: string) => atom("info"));
+export const tabFamily = atomFamily((_tab: string) => atom("analysis"));
 export const currentTabSelectedAtom = tabValue(tabFamily);
 
 const reportModalOpenFamily = atomFamily((_tab: string) => atom(false));
@@ -425,6 +426,15 @@ export const currentDbTabAtom = tabValue(dbTabFamily);
 
 const analysisTabFamily = atomFamily((_tab: string) => atom("engines"));
 export const currentAnalysisTabAtom = tabValue(analysisTabFamily);
+
+const advancedDrawerOpenFamily = atomFamily((_tab: string) => atom(false));
+export const currentAdvancedDrawerOpenAtom = tabValue(advancedDrawerOpenFamily);
+
+const advancedPanelFamily = atomFamily((_tab: string) => atom<"engines" | "logs" | "database" | "annotate" | "info">("engines"));
+export const currentAdvancedPanelAtom = tabValue(advancedPanelFamily);
+
+const explainOverlayFamily = atomFamily((_tab: string) => atom<DrawShape[]>([]));
+export const currentExplainOverlayAtom = tabValue(explainOverlayFamily);
 
 const practiceTabFamily = atomFamily((_tab: string) => atom("train"));
 export const currentPracticeTabAtom = tabValue(practiceTabFamily);

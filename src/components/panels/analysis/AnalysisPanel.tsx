@@ -2,12 +2,15 @@ import { DragDropContext, Draggable, Droppable } from "@hello-pangea/dnd";
 import {
   Accordion,
   ActionIcon,
+  Box,
   Button,
   Card,
+  Drawer,
   Group,
   Paper,
   Popover,
   ScrollArea,
+  SegmentedControl,
   Space,
   Stack,
   Tabs,
@@ -29,6 +32,8 @@ import { TreeStateContext } from "@/components/common/TreeStateContext";
 import {
   activeTabAtom,
   allEnabledAtom,
+  currentAdvancedDrawerOpenAtom,
+  currentAdvancedPanelAtom,
   currentAnalysisTabAtom,
   currentExpandedEnginesAtom,
   enableAllAtom,
@@ -42,11 +47,61 @@ import { getInitials } from "@/utils/format";
 import BestMoves, { arrowColors } from "./BestMoves";
 import EngineSelection from "./EngineSelection";
 import LogsPanel from "./LogsPanel";
-import ReportPanel from "./ReportPanel";
 import ScoreBubble from "./ScoreBubble";
 import TablebaseInfo from "./TablebaseInfo";
+import DatabasePanel from "@/components/panels/database/DatabasePanel";
+import AnnotationPanel from "@/components/panels/annotation/AnnotationPanel";
+import InfoPanel from "@/components/panels/info/InfoPanel";
+import ReportPanel from "./ReportPanel";
 
-function AnalysisPanel() {
+function AnalysisPanel({ addGame }: { addGame: () => void }) {
+  const [opened, setOpened] = useAtom(currentAdvancedDrawerOpenAtom);
+  const [advancedPanel, setAdvancedPanel] = useAtom(currentAdvancedPanelAtom);
+  const [, setEngineTab] = useAtom(currentAnalysisTabAtom);
+
+  const selectAdvancedPanel = (panel: string) => {
+    if (["engines", "logs", "database", "annotate", "info"].includes(panel)) {
+      setAdvancedPanel(panel as "engines" | "logs" | "database" | "annotate" | "info");
+      if (panel === "engines" || panel === "logs") setEngineTab(panel);
+    }
+  };
+
+  return (
+    <Stack h="100%" gap="xs" miw={0}>
+      <Group justify="space-between" px="sm" pt="xs">
+        <Text fw={700} size="lg">Game Review</Text>
+        <Button variant="default" size="xs" onClick={() => setOpened(true)}>Advanced</Button>
+      </Group>
+      <Box flex={1} miw={0} mih={0} style={{ overflow: "hidden" }}>
+        <ReportPanel />
+      </Box>
+      <Drawer opened={opened} onClose={() => setOpened(false)} title="Advanced" position="right" size="min(48rem, 90vw)" keepMounted>
+        <Stack h="calc(100vh - 6rem)" gap="sm">
+          <SegmentedControl
+            fullWidth
+            value={advancedPanel}
+            onChange={selectAdvancedPanel}
+            data={[
+              { label: "Engines", value: "engines" },
+              { label: "Logs", value: "logs" },
+              { label: "Database", value: "database" },
+              { label: "Annotate", value: "annotate" },
+              { label: "Info", value: "info" },
+            ]}
+          />
+          <Box flex={1} mih={0} style={{ overflow: "hidden" }}>
+            {(advancedPanel === "engines" || advancedPanel === "logs") && <AdvancedEnginePanel />}
+            {advancedPanel === "database" && <DatabasePanel />}
+            {advancedPanel === "annotate" && <AnnotationPanel />}
+            {advancedPanel === "info" && <InfoPanel addGame={addGame} />}
+          </Box>
+        </Stack>
+      </Drawer>
+    </Stack>
+  );
+}
+
+function AdvancedEnginePanel() {
   const { t } = useTranslation();
 
   const store = useContext(TreeStateContext)!;
@@ -100,7 +155,6 @@ function AnalysisPanel() {
       >
         <Tabs.List>
           <Tabs.Tab value="engines">{t("Board.Analysis.Engines")}</Tabs.Tab>
-          <Tabs.Tab value="report">{t("Board.Analysis.Report")}</Tabs.Tab>
           <Tabs.Tab value="logs" disabled={loadedEngines.length === 0}>
             {t("Board.Analysis.Logs")}
           </Tabs.Tab>
@@ -244,17 +298,6 @@ function AnalysisPanel() {
               </Group>
             </Stack>
           </ScrollArea>
-        </Tabs.Panel>
-        <Tabs.Panel
-          value="report"
-          pt="xs"
-          style={{
-            overflow: "hidden",
-            display: tab === "report" ? "flex" : "none",
-            flexDirection: "column",
-          }}
-        >
-          <ReportPanel />
         </Tabs.Panel>
         <Tabs.Panel
           value="logs"

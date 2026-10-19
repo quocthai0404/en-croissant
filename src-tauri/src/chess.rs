@@ -452,6 +452,181 @@ pub struct MoveAnalysis {
     is_sacrifice: bool,
 }
 
+#[derive(Serialize, Debug, Clone, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct EngineBenchmarkCandidate {
+    threads: u32,
+    median_nps: u32,
+    median_depth: u32,
+}
+
+#[derive(Serialize, Debug, Clone, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct EngineBenchmarkResult {
+    engine_name: String,
+    candidates: Vec<EngineBenchmarkCandidate>,
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn benchmark_engine(
+    id: String,
+    engine: String,
+    thread_candidates: Vec<u32>,
+    hash_mb: u32,
+    state: tauri::State<'_, AppState>,
+) -> Result<EngineBenchmarkResult, Error> {
+    let cancel_flag = Arc::new(AtomicBool::new(false));
+    state
+        .analysis_cancel_flags
+        .insert(id.clone(), cancel_flag.clone());
+    let result = benchmark_engine_inner(
+        PathBuf::from(engine),
+        thread_candidates,
+        hash_mb,
+        cancel_flag,
+    )
+    .await;
+    state.analysis_cancel_flags.remove(&id);
+    result
+}
+
+async fn benchmark_engine_inner(
+    path: PathBuf,
+    thread_candidates: Vec<u32>,
+    hash_mb: u32,
+    cancel_flag: Arc<AtomicBool>,
+) -> Result<EngineBenchmarkResult, Error> {
+    const POSITIONS: [&str; 3] = [
+        "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+        "r3k2r/p1ppqpb1/bn2pnp1/2pP4/1p2P3/2N2N2/PPQBBPPP/R3K2R w KQkq - 0 1",
+        "8/2p5/3p4/1p1P4/1P2k3/6K1/8/8 w - - 0 1",
+    ];
+    let config = get_engine_config(path.clone()).await?;
+    let thread_range = config.options.iter().find_map(|option| match option {
+        UciOptionConfig::Spin { name, min, max, .. } if name.eq_ignore_ascii_case("Threads") => {
+            Some((
+                min.unwrap_or(1).max(1) as u32,
+                max.unwrap_or(1).max(1) as u32,
+            ))
+        }
+        _ => None,
+    });
+    let hash_range = config.options.iter().find_map(|option| match option {
+        UciOptionConfig::Spin { name, min, max, .. } if name.eq_ignore_ascii_case("Hash") => {
+            Some((
+                min.unwrap_or(1).max(1) as u32,
+                max.unwrap_or(1024).max(1) as u32,
+            ))
+        }
+        _ => None,
+    });
+    let supports_multipv = config
+        .options
+        .iter()
+        .any(|option| option.get_name().eq_ignore_ascii_case("MultiPV"));
+    let mut candidates = thread_candidates;
+    candidates.sort_unstable();
+    candidates.dedup();
+    if let Some((min, max)) = thread_range {
+        candidates.retain(|threads| *threads >= min && *threads <= max);
+    } else {
+        candidates = vec![1];
+    }
+    if candidates.is_empty() {
+        candidates.push(1);
+    }
+
+    let (mut proc, mut reader) = EngineProcess::new(path).await?;
+    let mut results = Vec::new();
+    for threads in candidates {
+        let actual_threads = thread_range
+            .map(|(min, max)| threads.clamp(min, max))
+            .unwrap_or(1);
+        let actual_hash = hash_range
+            .map(|(min, max)| hash_mb.clamp(min, max))
+            .unwrap_or(0);
+        let mut nps_samples = Vec::new();
+        let mut depth_samples = Vec::new();
+
+        for fen in POSITIONS {
+            if cancel_flag.load(Ordering::SeqCst) {
+                proc.kill().await?;
+                return Err(Error::AnalysisCancelled);
+            }
+            let mut extra_options = Vec::new();
+            if thread_range.is_some() {
+                extra_options.push(EngineOption {
+                    name: "Threads".to_string(),
+                    value: actual_threads.to_string(),
+                });
+            }
+            if hash_range.is_some() {
+                extra_options.push(EngineOption {
+                    name: "Hash".to_string(),
+                    value: actual_hash.to_string(),
+                });
+            }
+            if supports_multipv {
+                extra_options.push(EngineOption {
+                    name: "MultiPV".to_string(),
+                    value: "1".to_string(),
+                });
+            }
+            proc.set_options(EngineOptions {
+                fen: fen.to_string(),
+                moves: Vec::new(),
+                extra_options,
+            })
+            .await?;
+            proc.go(&GoMode::Time(200)).await?;
+
+            let mut sample = None;
+            let read_result = tokio::time::timeout(std::time::Duration::from_secs(3), async {
+                while let Some(line) = reader.next_line().await? {
+                    match parse_one(&line) {
+                        UciMessage::Info(attrs) => {
+                            if let Ok(best) = parse_uci_attrs(attrs, &fen.parse()?, &[]) {
+                                if best.nps > 0 {
+                                    sample = Some((best.nps, best.depth));
+                                }
+                            }
+                        }
+                        UciMessage::BestMove { .. } => break,
+                        _ => {}
+                    }
+                }
+                Ok::<(), Error>(())
+            })
+            .await
+            .map_err(|_| Error::EngineHandshakeTimeout)?;
+            read_result?;
+            if let Some((nps, depth)) = sample {
+                nps_samples.push(nps);
+                depth_samples.push(depth);
+            }
+        }
+
+        nps_samples.sort_unstable();
+        depth_samples.sort_unstable();
+        if !nps_samples.is_empty() {
+            results.push(EngineBenchmarkCandidate {
+                threads: actual_threads,
+                median_nps: nps_samples[nps_samples.len() / 2],
+                median_depth: depth_samples[depth_samples.len() / 2],
+            });
+        }
+    }
+    proc.kill().await?;
+    if results.is_empty() {
+        return Err(Error::NoMovesFound);
+    }
+    Ok(EngineBenchmarkResult {
+        engine_name: config.name,
+        candidates: results,
+    })
+}
+
 #[derive(Deserialize, Debug, Default, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct AnalysisOptions {
@@ -460,6 +635,21 @@ pub struct AnalysisOptions {
     pub annotate_novelties: bool,
     pub reference_db: Option<PathBuf>,
     pub reversed: bool,
+    #[serde(default)]
+    pub position_time_ms: Option<Vec<u32>>,
+    #[serde(default)]
+    pub progress_offset: f32,
+    #[serde(default = "default_progress_scale")]
+    pub progress_scale: f32,
+    #[serde(default = "default_finish_progress")]
+    pub finish_progress: bool,
+}
+
+fn default_progress_scale() -> f32 {
+    1.0
+}
+fn default_finish_progress() -> bool {
+    true
 }
 
 #[tauri::command]
@@ -524,6 +714,12 @@ pub async fn analyze_game(
     if options.reversed {
         fens.reverse();
     }
+    let mut position_times = options.position_time_ms.clone();
+    if options.reversed {
+        if let Some(times) = position_times.as_mut() {
+            times.reverse();
+        }
+    }
 
     let mut novelty_found = false;
 
@@ -538,7 +734,8 @@ pub async fn analyze_game(
             &state.progress_state,
             &app,
             id.clone(),
-            (i as f32 / fens.len() as f32) * 100.0,
+            (options.progress_offset + (i as f32 / fens.len() as f32) * options.progress_scale)
+                * 100.0,
             false,
         )?;
 
@@ -563,7 +760,12 @@ pub async fn analyze_game(
         })
         .await?;
 
-        proc.go(&go_mode).await?;
+        let position_go_mode = position_times
+            .as_ref()
+            .and_then(|times| times.get(i))
+            .map(|time_ms| GoMode::Time((*time_ms).max(1)))
+            .unwrap_or_else(|| go_mode.clone());
+        proc.go(&position_go_mode).await?;
 
         let mut current_analysis = MoveAnalysis::default();
         while let Ok(Some(line)) = reader.next_line().await {
@@ -628,7 +830,13 @@ pub async fn analyze_game(
             }
         }
     }
-    update_progress(&state.progress_state, &app, id.clone(), 100.0, true)?;
+    update_progress(
+        &state.progress_state,
+        &app,
+        id.clone(),
+        (options.progress_offset + options.progress_scale) * 100.0,
+        options.finish_progress,
+    )?;
     state.analysis_cancel_flags.remove(&id);
     Ok(analysis)
 }

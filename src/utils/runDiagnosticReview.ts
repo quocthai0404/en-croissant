@@ -116,6 +116,10 @@ export async function runDiagnosticReview(url: string, output?: string) {
         referenceDb: annotateNovelties ? referenceDb : null,
         reversed: settings.reversed,
         moves: uciMoves,
+        positionTimeMs: null,
+        progressOffset: 0,
+        progressScale: 1,
+        finishProgress: true,
       },
       engineSettings,
     );

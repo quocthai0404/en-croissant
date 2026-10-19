@@ -10,7 +10,7 @@ use crate::error::Error;
 
 #[derive(Debug, Clone)]
 struct Opening {
-    _eco: String,
+    eco: String,
     name: String,
     setup: Setup,
     pgn: Option<String>,
@@ -20,6 +20,13 @@ struct Opening {
 pub struct OutOpening {
     name: String,
     fen: String,
+}
+
+#[derive(Debug, Clone, Type, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpeningMembership {
+    eco: String,
+    name: String,
 }
 
 #[derive(Deserialize)]
@@ -73,6 +80,27 @@ pub fn get_opening_from_fens(fens: Vec<String>) -> Result<String, Error> {
     Err(Error::NoOpeningFound)
 }
 
+/// Return exact bundled opening-position membership for each supplied FEN.
+/// Generic start-position and Fischer Random labels are intentionally excluded.
+#[tauri::command]
+#[specta::specta]
+pub fn get_opening_membership(fens: Vec<String>) -> Result<Vec<Option<OpeningMembership>>, Error> {
+    Ok(fens
+        .into_iter()
+        .map(|fen| {
+            let fen: Fen = fen.parse().ok()?;
+            let setup = fen.into_setup();
+            OPENINGS
+                .iter()
+                .find(|opening| opening.pgn.is_some() && opening.setup == setup)
+                .map(|opening| OpeningMembership {
+                    eco: opening.eco.clone(),
+                    name: opening.name.clone(),
+                })
+        })
+        .collect())
+}
+
 pub fn get_opening_from_setup(setup: Setup) -> Result<String, Error> {
     OPENINGS
         .iter()
@@ -120,13 +148,13 @@ lazy_static! {
 
         let mut positions = vec![
             Opening {
-                _eco: "Extra".to_string(),
+                eco: "Extra".to_string(),
                 name: "Starting Position".to_string(),
                 setup: Setup::default(),
                 pgn: None,
             },
             Opening {
-                _eco: "Extra".to_string(),
+                eco: "Extra".to_string(),
                 name: "Empty Board".to_string(),
                 setup: Setup::empty(),
                 pgn: None,
@@ -144,7 +172,7 @@ lazy_static! {
                     }
                 }
                 positions.push(Opening {
-                    _eco: record.eco,
+                    eco: record.eco,
                     name: record.name,
                     setup: pos.into_setup(EnPassantMode::Legal),
                     pgn: Some(record.pgn),
@@ -158,7 +186,7 @@ lazy_static! {
             let record: FischerRandomRecord = result.expect("Failed to deserialize opening");
             let fen: Fen = record.fen.parse().expect("Failed to parse fen");
             positions.push(Opening {
-                _eco: "FRC".to_string(),
+                eco: "FRC".to_string(),
                 name: record.name,
                 setup: fen.into_setup(),
                 pgn: None,
@@ -178,5 +206,27 @@ mod tests {
             get_opening_from_fen("rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPPKPPP/RNBQ1BNR b kq - 1 2")
                 .unwrap();
         assert_eq!(opening, "Bongcloud Attack");
+    }
+
+    #[test]
+    fn exact_membership_excludes_start_and_reports_bundled_eco_position() {
+        let memberships = get_opening_membership(vec![
+            "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1".to_string(),
+            "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1".to_string(),
+            "not a fen".to_string(),
+        ])
+        .unwrap();
+
+        assert_eq!(memberships.len(), 3);
+        assert!(memberships[0].is_none());
+        assert_eq!(
+            memberships[1].as_ref().map(|opening| opening.eco.as_str()),
+            Some("B00")
+        );
+        assert_eq!(
+            memberships[1].as_ref().map(|opening| opening.name.as_str()),
+            Some("King's Pawn Game")
+        );
+        assert!(memberships[2].is_none());
     }
 }

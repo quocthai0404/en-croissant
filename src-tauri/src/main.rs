@@ -38,8 +38,8 @@ use tauri::{Emitter, Manager, Window};
 use tauri_plugin_log::{Target, TargetKind};
 
 use crate::chess::{
-    analyze_game, cancel_analysis, get_engine_config, get_engine_logs, kill_engine, kill_engines,
-    stop_engine,
+    analyze_game, benchmark_engine, cancel_analysis, get_engine_config, get_engine_logs,
+    kill_engine, kill_engines, stop_engine,
 };
 use crate::db::{
     clear_games, convert_pgn, create_indexes, delete_database, delete_db_game, delete_empty_games,
@@ -68,7 +68,8 @@ use crate::{
     },
     fs::{download_file, file_exists, get_file_metadata},
     opening::{
-        get_opening_from_fen, get_opening_from_fens, get_opening_from_name, search_opening_name,
+        get_opening_from_fen, get_opening_from_fens, get_opening_from_name, get_opening_membership,
+        search_opening_name,
     },
 };
 use std::sync::atomic::AtomicBool;
@@ -154,6 +155,8 @@ fn main() {
             get_best_moves,
             analyze_game,
             cancel_analysis,
+            benchmark_engine,
+            get_system_capabilities,
             stop_engine,
             kill_engine,
             kill_engines,
@@ -163,6 +166,7 @@ fn main() {
             search_opening_name,
             get_opening_from_fen,
             get_opening_from_fens,
+            get_opening_membership,
             get_opening_from_name,
             get_players_game_info,
             get_engine_config,
@@ -324,4 +328,24 @@ fn is_bmi2_compatible() -> bool {
 fn memory_size() -> u32 {
     let total_bytes = sysinfo::System::new_all().total_memory();
     (total_bytes / 1024 / 1024) as u32
+}
+
+#[derive(serde::Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct SystemCapabilities {
+    logical_cores: u32,
+    total_memory_bytes: u64,
+    available_memory_bytes: u64,
+}
+
+#[tauri::command]
+#[specta::specta]
+fn get_system_capabilities() -> SystemCapabilities {
+    let mut system = sysinfo::System::new_all();
+    system.refresh_memory();
+    SystemCapabilities {
+        logical_cores: system.cpus().len().max(1) as u32,
+        total_memory_bytes: system.total_memory(),
+        available_memory_bytes: system.available_memory(),
+    }
 }

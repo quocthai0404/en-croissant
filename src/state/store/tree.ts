@@ -7,6 +7,7 @@ import { createStore, type StateCreator } from "zustand";
 import { persist } from "zustand/middleware";
 import type { BestMoves, Outcome, Score } from "@/bindings";
 import type { CommentaryPerspective } from "@/commentary/perspective";
+import type { ReviewEvidenceSnapshot } from "@/review/types";
 import { createDebouncedSessionStorage } from "./debouncedStorage";
 import { ANNOTATION_INFO, type Annotation } from "@/utils/annotation";
 import { getPGN } from "@/utils/chess";
@@ -86,6 +87,7 @@ export interface TreeStoreState extends TreeState {
     ) => void;
 
     setReportInProgress: (value: boolean) => void;
+    setReviewEvidence: (evidence: ReviewEvidenceSnapshot | undefined) => void;
 
     practicePath: number[] | null;
     setPracticePath: (path: number[] | null) => void;
@@ -458,8 +460,13 @@ export const createTreeStore = (id?: string, initialTree?: TreeState) => {
         setCommentaryPerspective: (payload) =>
             set(
                 produce((state) => {
-                    state.dirty = true;
                     state.commentaryPerspective = payload;
+                }),
+            ),
+        setReviewEvidence: (evidence) =>
+            set(
+                produce((state) => {
+                    state.report.evidence = evidence;
                 }),
             ),
         setGeneratedComments: (payload) =>

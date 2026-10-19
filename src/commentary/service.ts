@@ -232,7 +232,11 @@ export function getChessFacts(context: MoveContext): ChessFact[] {
           confidence: "verified",
           source: "adapter",
         });
-        if (context.bestReplyAfter?.sanMoves[0] === capture.san) {
+        if (
+          context.bestReplyAfter?.sanMoves[0] === capture.san &&
+          (context.bestReplyAfter.depth ?? 0) >= 10 &&
+          Number.isFinite(context.bestReplyAfter.score.value.value)
+        ) {
           facts.push({
             id: `${context.mainlinePly}:engine-recommends-capture:${piece.square}`,
             code: "ENGINE_RECOMMENDED_CAPTURE",
@@ -260,6 +264,22 @@ export function getChessFacts(context: MoveContext): ChessFact[] {
   const openedLine = openedAttackLine(context, 0);
   if (openedLine) facts.push(openedLine);
   return facts;
+}
+
+/** Shared, non-rendered evidence for the V3 report and the legacy commentary adapter. */
+export function getReviewFactsForGame(
+  root: TreeNode,
+  gameId: string,
+  analysis: MoveAnalysis[],
+): { context: MoveContext; facts: ChessFact[]; event?: CommentaryEvent }[] {
+  const contexts = buildMoveContexts(root, gameId, analysis);
+  const factsByContext = contexts.map(getChessFacts);
+  const events = planTacticalEvents(contexts, factsByContext);
+  return contexts.map((context, index) => ({
+    context,
+    facts: factsByContext[index] ?? [],
+    ...(events.get(context.mainlinePly) ? { event: events.get(context.mainlinePly)! } : {}),
+  }));
 }
 
 function hasSameTarget(first: ChessFact, second: ChessFact): boolean {

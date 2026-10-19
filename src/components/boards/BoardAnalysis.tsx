@@ -17,6 +17,8 @@ import { useStore } from "zustand";
 import {
   allEnabledAtom,
   autoSaveAtom,
+  currentAdvancedDrawerOpenAtom,
+  currentAdvancedPanelAtom,
   currentAnalysisTabAtom,
   currentPracticeTabAtom,
   currentReportModalOpenAtom,
@@ -115,6 +117,8 @@ function BoardAnalysis() {
   const keyMap = useAtomValue(keyMapAtom);
 
   const [, setAnalysisTab] = useAtom(currentAnalysisTabAtom);
+  const [, setAdvancedDrawerOpen] = useAtom(currentAdvancedDrawerOpenAtom);
+  const [, setAdvancedPanel] = useAtom(currentAdvancedPanelAtom);
   const [currentTabSelected, setCurrentTabSelected] = useAtom(currentTabSelectedAtom);
   const [, setReportModalOpen] = useAtom(currentReportModalOpenAtom);
   const practiceTabSelected = useAtomValue(currentPracticeTabAtom);
@@ -122,6 +126,13 @@ function BoardAnalysis() {
   const practicing = currentTabSelected === "practice" && practiceTabSelected === "train";
   const practiceState = useAtomValue(practiceStateAtom);
   const isPracticeRating = practicing && practiceState.phase === "correct";
+
+  const openAdvanced = (panel: "engines" | "logs" | "database" | "annotate" | "info") => {
+    setCurrentTabSelected("analysis");
+    setAdvancedPanel(panel);
+    if (panel === "engines" || panel === "logs") setAnalysisTab(panel);
+    setAdvancedDrawerOpen(true);
+  };
 
   const setPracticePath = useStore(store, (s) => s.setPracticePath);
   useEffect(() => {
@@ -152,14 +163,14 @@ function BoardAnalysis() {
       keyMap.GENERATE_REPORT.keys,
       (e) => {
         setCurrentTabSelected("analysis");
-        setAnalysisTab("report");
+        setAnalysisTab("engines");
         setReportModalOpen(true);
         e.preventDefault();
       },
     ],
-    [keyMap.DATABASE_TAB.keys, () => setCurrentTabSelected("database")],
-    [keyMap.ANNOTATE_TAB.keys, () => setCurrentTabSelected("annotate")],
-    [keyMap.INFO_TAB.keys, () => setCurrentTabSelected("info")],
+    [keyMap.DATABASE_TAB.keys, () => (isRepertoire ? setCurrentTabSelected("database") : openAdvanced("database"))],
+    [keyMap.ANNOTATE_TAB.keys, () => (isRepertoire ? setCurrentTabSelected("annotate") : openAdvanced("annotate"))],
+    [keyMap.INFO_TAB.keys, () => (isRepertoire ? setCurrentTabSelected("info") : openAdvanced("info"))],
     [
       keyMap.TOGGLE_ALL_ENGINES.keys,
       (e) => {
@@ -191,7 +202,7 @@ function BoardAnalysis() {
           <Tabs
             w="100%"
             h="100%"
-            value={currentTabSelected}
+            value={isRepertoire ? currentTabSelected : "analysis"}
             onChange={(v) => setCurrentTabSelected(v || "info")}
             keepMounted={false}
             activateTabWithKeyboard={false}
@@ -210,7 +221,7 @@ function BoardAnalysis() {
               },
             }}
           >
-            <Tabs.List grow>
+            <Tabs.List grow style={!isRepertoire ? { display: "none" } : undefined}>
               {isRepertoire && (
                 <Tabs.Tab value="practice" leftSection={<IconTargetArrow size="1rem" />}>
                   {t("Board.Tabs.Practice")}
@@ -219,32 +230,20 @@ function BoardAnalysis() {
               <Tabs.Tab value="analysis" leftSection={<IconZoomCheck size="1rem" />}>
                 {t("Board.Tabs.Analysis")}
               </Tabs.Tab>
-              <Tabs.Tab value="database" leftSection={<IconDatabase size="1rem" />}>
-                {t("Board.Tabs.Database")}
-              </Tabs.Tab>
-              <Tabs.Tab value="annotate" leftSection={<IconNotes size="1rem" />}>
-                {t("Board.Tabs.Annotate")}
-              </Tabs.Tab>
-              <Tabs.Tab value="info" leftSection={<IconInfoCircle size="1rem" />}>
-                {t("Board.Tabs.Info")}
-              </Tabs.Tab>
+              {isRepertoire && <Tabs.Tab value="database" leftSection={<IconDatabase size="1rem" />}>{t("Board.Tabs.Database")}</Tabs.Tab>}
+              {isRepertoire && <Tabs.Tab value="annotate" leftSection={<IconNotes size="1rem" />}>{t("Board.Tabs.Annotate")}</Tabs.Tab>}
+              {isRepertoire && <Tabs.Tab value="info" leftSection={<IconInfoCircle size="1rem" />}>{t("Board.Tabs.Info")}</Tabs.Tab>}
             </Tabs.List>
             {isRepertoire && (
               <Tabs.Panel value="practice" flex={1} style={{ overflowY: "hidden" }}>
                 <PracticePanel />
               </Tabs.Panel>
             )}
-            <Tabs.Panel value="info" flex={1} style={{ overflowY: "hidden" }}>
-              <InfoPanel addGame={addGame} />
-            </Tabs.Panel>
-            <Tabs.Panel value="database" flex={1} style={{ overflowY: "hidden" }}>
-              <DatabasePanel />
-            </Tabs.Panel>
-            <Tabs.Panel value="annotate" flex={1} style={{ overflowY: "hidden" }}>
-              <AnnotationPanel />
-            </Tabs.Panel>
+            {isRepertoire && <Tabs.Panel value="info" flex={1} style={{ overflowY: "hidden" }}><InfoPanel addGame={addGame} /></Tabs.Panel>}
+            {isRepertoire && <Tabs.Panel value="database" flex={1} style={{ overflowY: "hidden" }}><DatabasePanel /></Tabs.Panel>}
+            {isRepertoire && <Tabs.Panel value="annotate" flex={1} style={{ overflowY: "hidden" }}><AnnotationPanel /></Tabs.Panel>}
             <Tabs.Panel value="analysis" flex={1} style={{ overflowY: "hidden" }}>
-              <AnalysisPanel />
+              <AnalysisPanel addGame={addGame} />
             </Tabs.Panel>
           </Tabs>
         </Paper>

@@ -1,4 +1,5 @@
 import { Chess } from "chess.js";
+import { parseUci } from "chessops";
 import { describe, expect, test } from "vitest";
 import { createTreeStore } from "@/state/store/tree";
 import { defaultTree, getNodeAtPath, type TreeNode } from "@/utils/treeReducer";
@@ -13,6 +14,8 @@ import { buildMoveContexts, getStableGameId, type MoveContext } from "../types";
 import type { MoveAnalysis } from "@/bindings";
 import { resolveViewerSide } from "../perspective";
 import { buildDiagnosticReportData, formatDiagnosticMarkdown } from "@/utils/diagnosticReport";
+import { buildReviewEvidence } from "@/review/evidence";
+import { buildExplainPresentation } from "@/review/explain";
 
 // Minimal mainline only; keep the regression case reproducible without publishing a raw PGN.
 const goldenMoves = `1. e4 d5 2. exd5 c6 3. dxc6 Nxc6 4. Bb5 Bd7 5. Nf3 Nf6 6. O-O g6
@@ -54,7 +57,7 @@ function treeFromPgn(pgn: string = goldenMoves): TreeNode {
   for (const move of history) {
     const child: TreeNode = {
       fen: move.after,
-      move: null,
+      move: parseUci(`${move.from}${move.to}${move.promotion ?? ""}`)!,
       san: move.san,
       children: [],
       score: null,
@@ -222,6 +225,27 @@ describe("deterministic move commentary", () => {
     );
   });
 
+  test("V3 evidence preserves the 23.c4 opportunity and links the actual 23...Bxb2 capture", () => {
+    const root = treeFromPgn();
+    const analysis = Array.from({ length: 49 }, (_, index) => analysisAt(`move-${index}`, 0, 30));
+    analysis[44] = analysisAt("Rb1", -400, 30);
+    analysis[45] = analysisAt("Bxb2", -620, 30);
+    analysis[46] = analysisAt("Rb1", -480, 30);
+    const evidence = buildReviewEvidence(root, "fixture-review", analysis, Array(48).fill(null));
+    const c4 = evidence.records.find((record) => record.mainlinePly === 45)!;
+    const bxb2 = evidence.records.find((record) => record.mainlinePly === 46)!;
+    const c4Explain = buildExplainPresentation(c4, evidence.records, "white");
+    const captureExplain = buildExplainPresentation(bxb2, evidence.records, "white");
+
+    expect(c4.facts).toContainEqual(expect.objectContaining({ code: "OPENED_ATTACK_LINE", evidenceMoves: ["Bxb2"] }));
+    expect(c4.facts).toContainEqual(expect.objectContaining({ code: "LEGAL_CAPTURE_AVAILABLE", evidenceMoves: ["Bxb2"] }));
+    expect(c4.event).toMatchObject({ role: "cause", result: "actual", relatedPly: 46 });
+    expect(captureExplain.paragraphs[0]).toContain("23...Bxb2 bắt hậu của bạn tại b2");
+    expect(captureExplain.paragraphs[0]).toContain("sơ hở do 23.c4");
+    expect(c4Explain.paragraphs.join(" ")).not.toContain("đã mất hậu");
+    expect(captureExplain.overlay.some((shape) => shape.orig === "g7" && shape.dest === "b2")).toBe(true);
+  });
+
   test("separates legal capture, engine recommendation, and realized material capture", () => {
     const root = treeFromPgn();
     const plainContexts = buildMoveContexts(root, "fixture-game", []);
@@ -241,6 +265,12 @@ describe("deterministic move commentary", () => {
     expect(getChessFacts(analyzedC4)).toContainEqual(
       expect.objectContaining({ code: "ENGINE_RECOMMENDED_CAPTURE", evidenceMoves: ["Bxb2"] }),
     );
+
+    analysis[45] = analysisAt("Bxb2", -620, 9);
+    const shallowReply = buildMoveContexts(root, "fixture-game", analysis).find(
+      (context) => context.mainlinePly === 45,
+    )!;
+    expect(getChessFacts(shallowReply).some((fact) => fact.code === "ENGINE_RECOMMENDED_CAPTURE")).toBe(false);
 
     analysis[45] = analysisAt("a6", -620);
     const mismatchedReply = buildMoveContexts(root, "fixture-game", analysis).find(
