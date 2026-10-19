@@ -11,6 +11,7 @@ import {
 import { Notifications } from "@mantine/notifications";
 import { createRouter, RouterProvider } from "@tanstack/react-router";
 import { getMatches } from "@tauri-apps/plugin-cli";
+import { exit } from "@tauri-apps/plugin-process";
 import { listen } from "@tauri-apps/api/event";
 import { attachConsole, info, warn } from "@tauri-apps/plugin-log";
 import { getDefaultStore, useAtom, useAtomValue, useSetAtom } from "jotai";
@@ -65,6 +66,7 @@ import { initUserAgent } from "@/utils/http";
 import { enableTelemetry } from "@/utils/telemetry";
 import { type LocalEngine, requiredEngineSettings } from "@/utils/engines";
 import { unwrap } from "@/utils/unwrap";
+import { runDiagnosticReview } from "@/utils/runDiagnosticReview";
 import { routeTree } from "./routeTree.gen";
 
 export type Dirs = {
@@ -178,6 +180,35 @@ function useAppStartup() {
 
       const store = getDefaultStore();
       await registerBundledStockfish(store);
+
+      let cliMatches: Awaited<ReturnType<typeof getMatches>> | undefined;
+      try {
+        cliMatches = await getMatches();
+      } catch (e) {
+        warn(`Failed to parse CLI args: ${e}`);
+      }
+
+      const reviewUrl = cliMatches?.args["review-url"];
+      if (reviewUrl?.occurrences && typeof reviewUrl.value === "string") {
+        const output = cliMatches?.args["report-output"]?.value;
+        try {
+          const result = await runDiagnosticReview(
+            reviewUrl.value,
+            typeof output === "string" ? output : undefined,
+          );
+          info(`Diagnostic report status: ${result.status}`);
+          info(`Diagnostic JSON: ${result.jsonPath}`);
+          info(`Diagnostic Markdown: ${result.markdownPath}`);
+          await exit(result.status === "complete" ? 0 : 1);
+        } catch (e) {
+          warn(`Diagnostic report could not be written: ${e}`);
+          await exit(1);
+        }
+        return () => {
+          if (detach) detach();
+        };
+      }
+
       await commands.closeSplashscreen();
       const telemetryEnabled = store.get(telemetryEnabledAtom);
       if (telemetryEnabled) {
@@ -187,17 +218,13 @@ function useAppStartup() {
         void openCommandLineFile(payload, setTabs, setActiveTab, navigateToBoard);
       });
 
-      try {
-        const matches = await getMatches();
-        if (matches.args.file.occurrences > 0) {
-          info(`Opening file from command line: ${matches.args.file.value}`);
-          if (typeof matches.args.file.value === "string") {
-            const file = matches.args.file.value;
-            await openCommandLineFile(file, setTabs, setActiveTab, navigateToBoard);
-          }
+      const fileArg = cliMatches?.args.file;
+      if (fileArg && fileArg.occurrences > 0) {
+        info(`Opening file from command line: ${fileArg.value}`);
+        if (typeof fileArg.value === "string") {
+          const file = fileArg.value;
+          await openCommandLineFile(file, setTabs, setActiveTab, navigateToBoard);
         }
-      } catch (e) {
-        warn(`Failed to parse CLI args: ${e}`);
       }
 
       await preloadReferenceDb(store);

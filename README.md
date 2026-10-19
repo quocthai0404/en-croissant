@@ -32,6 +32,16 @@ pnpm build-vite
 pnpm build:installer
 ```
 
+### Headless Chess.com review export
+
+To run the same PGN import, local Stockfish report, and offline commentary pipeline without opening the app window, close any running Chess Review instance and run:
+
+```powershell
+pnpm review:link --review-url "https://www.chess.com/game/live/123456789" --report-output "$env:USERPROFILE\Desktop\chess-review"
+```
+
+The command writes `chess-review.json` (full engine data, per-move contexts, facts, and generated commentary) and `chess-review.md` (a readable summary) next to the requested output stem. If `--report-output` is omitted, both files are written to Downloads. This diagnostic mode uses the saved Report-panel engine and settings, performs the Chess.com fetch over the network, runs Stockfish locally, and exits with a non-zero code if the review fails. It does not save the imported game or generated comments into the user's game tabs. Close the normal app first because the single-instance handler forwards new launches to an existing window.
+
 `pnpm build:installer` downloads the pinned official Stockfish 19 release, verifies its SHA-256 checksum, builds an NSIS installer, and writes `ChessReview_1.0.0_Setup.exe` to `src-tauri/target/release/bundle/nsis`. The installer includes an offline WebView2 installer, Start Menu shortcut, uninstaller, and the `ChessReview.exe` application binary. See [implementation notes](docs/IMPLEMENTATION_NOTES.md) for the architecture and verification limits, and [license notices](docs/LICENSE_NOTICES.md) for upstream attribution.
 
 ## License

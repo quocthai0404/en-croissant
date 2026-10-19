@@ -7,6 +7,7 @@
     "start-vite": "vite",
     "build-vite": "tsc --noEmit && vite build",
     "build": "tauri build --no-bundle",
+    "review:link": "tauri dev -- --",
     "prepare:stockfish": "node scripts/prepare-stockfish.mjs",
     "rename:installer": "node scripts/rename-installer.mjs",
     "build:installer": "pnpm prepare:stockfish && tauri build --bundles nsis && pnpm rename:installer",

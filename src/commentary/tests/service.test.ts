@@ -12,6 +12,7 @@ import {
 import { buildMoveContexts, getStableGameId, type MoveContext } from "../types";
 import type { MoveAnalysis } from "@/bindings";
 import { resolveViewerSide } from "../perspective";
+import { buildDiagnosticReportData, formatDiagnosticMarkdown } from "@/utils/diagnosticReport";
 
 // Minimal mainline only; keep the regression case reproducible without publishing a raw PGN.
 const goldenMoves = `1. e4 d5 2. exd5 c6 3. dxc6 Nxc6 4. Bb5 Bd7 5. Nf3 Nf6 6. O-O g6
@@ -103,6 +104,50 @@ describe("deterministic move commentary", () => {
     expect(blackBxb2.bestReplyAfter?.sanMoves[0]).toBe("Rb1");
     expect(blackBxb2.scoreBefore?.value).toEqual({ type: "cp", value: -620 });
     expect(blackBxb2.scoreAfter?.value).toEqual({ type: "cp", value: -480 });
+  });
+
+  test("diagnostic export keeps the engine alternative, reply, facts, and commentary distinct", () => {
+    const analysis = Array.from({ length: 49 }, (_, index) => analysisAt(`move-${index}`, index));
+    analysis[44] = analysisAt("Rb1", 35, 31);
+    analysis[45] = analysisAt("Bxb2", -620, 32);
+    analysis[46] = analysisAt("Rb1", -480, 30);
+    const tree = defaultTree();
+    tree.root = treeFromPgn();
+
+    const report = buildDiagnosticReportData({
+      url: "https://www.chess.com/game/live/123456789",
+      pgn: goldenMoves,
+      tree,
+      gameId: "fixture-game",
+      uciMoves: Array.from({ length: 48 }, () => "a2a3"),
+      analysis,
+      openingName: "Scandinavian Defense",
+      requestedPerspective: "neutral",
+      viewerSide: "neutral",
+      engine: {
+        name: "Stockfish 19",
+        version: "19",
+        goMode: { t: "Time", c: 500 },
+        reversed: true,
+        variations: true,
+        annotateNovelties: false,
+      },
+      createdAt: "2026-10-19T00:00:00.000Z",
+    });
+
+    const c4 = report.moves.find((move) => move.mainlinePly === 45)!;
+    expect(c4.bestAlternativeBefore?.sanMoves[0]).toBe("Rb1");
+    expect(c4.beforePositionAnalysis).toBe(analysis[44]);
+    expect(c4.bestReplyAfter?.sanMoves[0]).toBe("Bxb2");
+    expect(c4.afterPositionAnalysis).toBe(analysis[45]);
+    expect(c4.facts).toContainEqual(expect.objectContaining({ code: "OPENED_ATTACK_LINE" }));
+    expect(c4.commentary).not.toBeNull();
+    expect(c4.commentary?.plan.engineEvidence?.bestReplyAfter?.san).toBe("Bxb2");
+
+    const markdown = formatDiagnosticMarkdown(report);
+    expect(markdown).toContain("Best alternative before the move: Rb1");
+    expect(markdown).toContain("Best reply after the move: Bxb2");
+    expect(markdown).toContain(c4.commentary!.text);
   });
 
   test("accepts chronological report output after reversed engine traversal", () => {

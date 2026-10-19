@@ -73,6 +73,19 @@
           "name": "file",
           "index": 1,
           "takesValue": true
+        },
+        {
+          "name": "review-url",
+          "short": "r",
+          "description": "Run a hidden Chess.com review and export raw analysis and commentary",
+          "takesValue": true
+        },
+        {
+          "name": "report-output",
+          "short": "o",
+          "description": "Output filename stem for the diagnostic .json and .md files",
+          "takesValue": true,
+          "requires": "review-url"
         }
       ]
     }
