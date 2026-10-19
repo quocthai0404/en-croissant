@@ -131,8 +131,8 @@ jobs:
           engine="$app/Contents/Resources/stockfish/stockfish-macos"
           test -x "$app_binary"
           test -x "$engine"
-          lipo -verify_arch arm64 x86_64 "$app_binary"
-          lipo -verify_arch arm64 x86_64 "$engine"
+          lipo "$app_binary" -verify_arch arm64 x86_64
+          lipo "$engine" -verify_arch arm64 x86_64
           uci_output="$("$engine" <<'EOF'
           uci
           quit
