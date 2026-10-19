@@ -32,4 +32,9 @@ src-tauri/gen/
 README.vi.md
 docs/TEST_RESULTS.md
 docs/DOCKER_DECISION.md
+docs/commentary_v2_*.md
 tests/fixtures/*.pgn
+
+# Downloaded only for the Windows installer build; do not commit a release binary.
+src-tauri/resources/stockfish/stockfish.exe
+src-tauri/resources/.stockfish-download/

@@ -23,6 +23,7 @@ import { HTML5Backend } from "react-dnd-html5-backend";
 import {
   activeTabAtom,
   databaseConversionStateAtom,
+  enginesAtom,
   fontSizeAtom,
   is3dAtom,
   pieceSetAtom,
@@ -62,6 +63,8 @@ import ErrorComponent from "@/components/ErrorComponent";
 import { getDatabasesDir, getDocumentDir, getEnginesDir, getPuzzlesDir } from "@/utils/directories";
 import { initUserAgent } from "@/utils/http";
 import { enableTelemetry } from "@/utils/telemetry";
+import { type LocalEngine, requiredEngineSettings } from "@/utils/engines";
+import { unwrap } from "@/utils/unwrap";
 import { routeTree } from "./routeTree.gen";
 
 export type Dirs = {
@@ -125,6 +128,37 @@ const preloadReferenceDb = async (store: ReturnType<typeof getDefaultStore>) => 
   }
 };
 
+const bundledStockfishId = "bundled-stockfish-19";
+
+const registerBundledStockfish = async (store: ReturnType<typeof getDefaultStore>) => {
+  try {
+    const path = unwrap(await commands.getBundledEnginePath());
+    const engines = store.get(enginesAtom) ?? [];
+    if (engines.some((engine) => engine.type === "local" && engine.path === path)) return;
+
+    const config = unwrap(await commands.getEngineConfig(path));
+    const bundledEngine: LocalEngine = {
+      type: "local",
+      id: bundledStockfishId,
+      name: config.name || "Stockfish 19",
+      version: "19",
+      path,
+      image: "",
+      loaded: true,
+      settings: config.options
+        .filter((option) => requiredEngineSettings.includes(option.value.name))
+        .map((option) => ({
+          name: option.value.name,
+          value: "default" in option.value ? (option.value.default?.toString() ?? "") : "",
+        })),
+    };
+    store.set(enginesAtom, [...engines, bundledEngine]);
+    info(`Registered bundled Stockfish from ${path}`);
+  } catch (error) {
+    warn(`Bundled Stockfish is unavailable: ${error}`);
+  }
+};
+
 const navigateToBoard = () => router.navigate({ to: "/" });
 
 function useAppStartup() {
@@ -137,13 +171,14 @@ function useAppStartup() {
     initialized.current = true;
 
     const startupSequence = async () => {
-      await commands.closeSplashscreen();
       await initUserAgent();
 
       const detach = await attachConsole();
       info("React app started successfully");
 
       const store = getDefaultStore();
+      await registerBundledStockfish(store);
+      await commands.closeSplashscreen();
       const telemetryEnabled = store.get(telemetryEnabledAtom);
       if (telemetryEnabled) {
         await enableTelemetry();

@@ -1,6 +1,6 @@
 # Chess Reviewer
 
-Chess Reviewer is a Windows-first, local-first desktop application adapted from En Croissant. Import a PGN, choose your own UCI engine, run a Game Report, and read offline Vietnamese commentary for the main line. Human notes and generated commentary remain separate.
+Chess Reviewer is a Windows-first, local-first desktop application adapted from En Croissant. Import a PGN, run a Game Report with bundled Stockfish, and read offline Vietnamese commentary for the main line. Human notes and generated commentary remain separate.
 
 ## Run from source
 
@@ -11,7 +11,7 @@ pnpm install --frozen-lockfile
 pnpm dev
 ```
 
-Open a PGN using the file-open action. Before the first Game Report, select **Select engine .exe** and point it to an extracted UCI engine executable. Download Stockfish from the [official website](https://stockfishchess.org/download/); it is not included in this repository or its installer. The application validates the UCI handshake before using the selected engine.
+Open a PGN using the file-open action. The Windows installer includes Stockfish 19 and the application validates its UCI handshake and registers it automatically at startup. Game Review therefore does not require Node.js, Rust, Python, or a separately installed chess engine. You may still add another UCI engine in Settings if desired.
 
 With an engine configured, open Game Report, select the engine and analysis level, and run the report. Generated commentary appears at the corresponding report node. PGN export preserves human notes and adds generated commentary with a re-importable marker.
 
@@ -32,7 +32,7 @@ pnpm build-vite
 pnpm build:installer
 ```
 
-`pnpm build:installer` uses the existing Tauri Windows bundler. See [implementation notes](docs/IMPLEMENTATION_NOTES.md) for the architecture and verification limits, and [license notices](docs/LICENSE_NOTICES.md) for upstream attribution.
+`pnpm build:installer` downloads the pinned official Stockfish 19 release, verifies its SHA-256 checksum, builds an NSIS installer, and writes `ChessReview_1.0.0_Setup.exe` to `src-tauri/target/release/bundle/nsis`. The installer includes an offline WebView2 installer, Start Menu shortcut, uninstaller, and the `ChessReview.exe` application binary. See [implementation notes](docs/IMPLEMENTATION_NOTES.md) for the architecture and verification limits, and [license notices](docs/LICENSE_NOTICES.md) for upstream attribution.
 
 ## License
 

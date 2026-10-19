@@ -6,7 +6,15 @@
     "windows": {
       "certificateThumbprint": null,
       "digestAlgorithm": "sha256",
-      "timestampUrl": ""
+      "timestampUrl": "",
+      "webviewInstallMode": {
+        "type": "offlineInstaller"
+      },
+      "nsis": {
+        "installMode": "currentUser",
+        "startMenuFolder": "Chess Review",
+        "displayLanguageSelector": false
+      }
     },
     "icon": [
       "icons/32x32.png",
@@ -25,7 +33,7 @@
     },
     "publisher": "Chess Reviewer contributors",
     "shortDescription": "Local-first chess game review",
-    "longDescription": "Analyze PGN games with a locally selected UCI engine and offline Vietnamese commentary.",
+    "longDescription": "Analyze PGN games with bundled Stockfish and offline Vietnamese commentary.",
     "macOS": {
       "entitlements": null,
       "exceptionDomain": "",
@@ -36,9 +44,10 @@
     "resources": {
       "../sound/": "sound/",
       "../LICENSE": "LICENSE",
-      "../docs/LICENSE_NOTICES.md": "LICENSE_NOTICES.md"
+      "../docs/LICENSE_NOTICES.md": "LICENSE_NOTICES.md",
+      "resources/stockfish/stockfish.exe": "stockfish/stockfish.exe"
     },
-    "targets": "all"
+    "targets": ["nsis"]
   },
   "build": {
     "beforeDevCommand": "pnpm start-vite",
@@ -46,14 +55,15 @@
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1420"
   },
-  "productName": "Chess Reviewer",
-  "mainBinaryName": "chess-reviewer",
+  "productName": "ChessReview",
+  "mainBinaryName": "ChessReview",
+  "version": "1.0.0",
   "identifier": "org.chessreviewer.desktop",
   "plugins": {
     "deep-link": {
       "desktop": {
         "schemes": [
-          "encroissant"
+          "chessreview"
         ]
       }
     },
@@ -65,7 +75,7 @@
           "takesValue": true
         }
       ]
-    },
+    }
   },
   "app": {
     "withGlobalTauri": false,

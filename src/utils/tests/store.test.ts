@@ -126,6 +126,7 @@ const getNewState = () => {
         root: s.root,
         position: s.position,
         headers: s.headers,
+        commentaryPerspective: s.commentaryPerspective,
         dirty: s.dirty,
         report: {
             inProgress: false,

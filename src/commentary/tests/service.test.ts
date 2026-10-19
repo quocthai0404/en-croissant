@@ -1,13 +1,50 @@
 import { Chess } from "chess.js";
 import { describe, expect, test } from "vitest";
-import pgn from "../../../tests/fixtures/thaidev_vs_rofu1_2026-10-18.pgn?raw";
 import { createTreeStore } from "@/state/store/tree";
-import { defaultTree, type TreeNode } from "@/utils/treeReducer";
+import { defaultTree, getNodeAtPath, type TreeNode } from "@/utils/treeReducer";
 import { extractGeneratedComment, mergeGeneratedComment } from "../pgnComment";
-import { generateCommentary, getChessFacts } from "../service";
-import { getStableGameId, type MoveContext } from "../types";
+import {
+  generateCommentary,
+  getChessFacts,
+  getCommentsForPerspective,
+  renderCommentaryPlan,
+} from "../service";
+import { buildMoveContexts, getStableGameId, type MoveContext } from "../types";
+import type { MoveAnalysis } from "@/bindings";
+import { resolveViewerSide } from "../perspective";
 
-function treeFromPgn(): TreeNode {
+// Minimal mainline only; keep the regression case reproducible without publishing a raw PGN.
+const goldenMoves = `1. e4 d5 2. exd5 c6 3. dxc6 Nxc6 4. Bb5 Bd7 5. Nf3 Nf6 6. O-O g6
+7. Re1 Bg7 8. c3 O-O 9. d4 a6 10. Bd3 e6 11. Bg5 Qb6 12. b4 a5
+13. b5 Na7 14. Nbd2 Bxb5 15. Bxb5 Nxb5 16. Rb1 Qc6 17. Qb3 Nd6
+18. Ne5 Qc7 19. Rbc1 Nf5 20. d5 Nxd5 21. Ng4 a4 22. Qb2 Qa5
+23. c4 Bxb2 24. Rb1 Bc3 0-1`;
+
+function cpScore(value: number): MoveAnalysis["best"][number]["score"] {
+  return { value: { type: "cp", value }, wdl: null };
+}
+
+function analysisAt(pv: string, score: number, depth = 20): MoveAnalysis {
+  return {
+    best: pv
+      ? [
+          {
+            nodes: 1000,
+            depth,
+            score: cpScore(score),
+            uciMoves: [],
+            sanMoves: [pv],
+            multipv: 1,
+            nps: 50000,
+          },
+        ]
+      : [],
+    novelty: false,
+    is_sacrifice: false,
+  };
+}
+
+function treeFromPgn(pgn: string = goldenMoves): TreeNode {
   const chess = new Chess();
   chess.loadPgn(pgn);
   const history = chess.history({ verbose: true });
@@ -33,6 +70,67 @@ function treeFromPgn(): TreeNode {
 }
 
 describe("deterministic move commentary", () => {
+  test("attaches a local opening name only to the first mainline commentary context", () => {
+    const comments = generateCommentary(treeFromPgn(), "fixture-game", [], {
+      openingName: "Scandinavian Defense: Blackburne Gambit",
+    });
+    const openingComment = comments.find((comment) => comment.plan.openingName);
+
+    expect(openingComment?.plan.openingName).toBe("Scandinavian Defense: Blackburne Gambit");
+    expect(openingComment?.text).toContain("Phòng thủ Scandinavia");
+    expect(comments.filter((comment) => comment.plan.openingName)).toHaveLength(1);
+  });
+
+  test("adapts pre-move alternatives and post-move replies from adjacent positions", () => {
+    const analysis = Array.from({ length: 49 }, (_, index) => analysisAt(`move-${index}`, index));
+    analysis[44] = analysisAt("Rb1", 35, 31);
+    analysis[45] = analysisAt("Bxb2", -620, 32);
+    analysis[46] = analysisAt("Rb1", -480, 30);
+
+    const contexts = buildMoveContexts(treeFromPgn(), "fixture-game", analysis);
+    const whiteC4 = contexts.find((context) => context.mainlinePly === 45)!;
+    const blackBxb2 = contexts.find((context) => context.mainlinePly === 46)!;
+
+    expect(whiteC4.bestAlternativeBefore?.sanMoves[0]).toBe("Rb1");
+    expect(whiteC4.bestAlternativeBefore?.depth).toBe(31);
+    expect(whiteC4.bestReplyAfter?.sanMoves[0]).toBe("Bxb2");
+    expect(whiteC4.bestReplyAfter?.score.value).toEqual({ type: "cp", value: -620 });
+    expect(whiteC4.scoreBefore?.value).toEqual({ type: "cp", value: 35 });
+    expect(whiteC4.scoreAfter?.value).toEqual({ type: "cp", value: -620 });
+
+    expect(blackBxb2.mover).toBe("black");
+    expect(blackBxb2.bestAlternativeBefore?.sanMoves[0]).toBe("Bxb2");
+    expect(blackBxb2.bestReplyAfter?.sanMoves[0]).toBe("Rb1");
+    expect(blackBxb2.scoreBefore?.value).toEqual({ type: "cp", value: -620 });
+    expect(blackBxb2.scoreAfter?.value).toEqual({ type: "cp", value: -480 });
+  });
+
+  test("accepts chronological report output after reversed engine traversal", () => {
+    const chronological = Array.from({ length: 49 }, (_, index) => analysisAt(`move-${index}`, index));
+    chronological[44] = analysisAt("Rb1", 35);
+    chronological[45] = analysisAt("Bxb2", -620);
+
+    // The native command restores input order after analyzing reversed positions.
+    const reversedEngineTraversal = [...chronological].reverse();
+    const reversedTraversalOutput = [...reversedEngineTraversal].reverse();
+    const whiteC4 = buildMoveContexts(treeFromPgn(), "fixture-game", reversedTraversalOutput).find(
+      (context) => context.mainlinePly === 45,
+    )!;
+
+    expect(whiteC4.bestAlternativeBefore?.sanMoves[0]).toBe("Rb1");
+    expect(whiteC4.bestReplyAfter?.sanMoves[0]).toBe("Bxb2");
+  });
+
+  test("keeps a missing final-position analysis empty instead of shifting evidence", () => {
+    const withoutFinalPosition = Array.from({ length: 48 }, (_, index) => analysisAt(`move-${index}`, index));
+    const lastMove = buildMoveContexts(treeFromPgn(), "fixture-game", withoutFinalPosition).at(-1)!;
+
+    expect(lastMove.mainlinePly).toBe(48);
+    expect(lastMove.bestAlternativeBefore?.sanMoves[0]).toBe("move-47");
+    expect(lastMove.bestReplyAfter).toBeNull();
+    expect(lastMove.scoreAfter).toBeNull();
+  });
+
   test("explains 23.c4 as White opening the g7-b2 diagonal and Black's legal queen capture", () => {
     const comments = generateCommentary(treeFromPgn(), "fixture-game", []);
     const whiteMove = comments.find((item) => item.mainlinePly === 45)!;
@@ -48,13 +146,14 @@ describe("deterministic move commentary", () => {
         confidence: "verified",
       }),
     );
-    expect(whiteMove.text).toContain("23.c4");
-    expect(whiteMove.text).toContain("tốt Trắng rời c3");
-    expect(whiteMove.text).toContain("23...Bxb2");
+    expect(whiteMove.plan.intent).toBe("opened-attack");
+    expect(whiteMove.text).toContain("Trắng đẩy tốt");
+    expect(whiteMove.text).toContain("khiến hậu Trắng lọt vào tầm bắt");
+    expect(whiteMove.text).not.toContain("bắt hậu Trắng");
     expect(whiteMove.position).toHaveLength(45);
     expect(whiteMove.facts).toContainEqual(
       expect.objectContaining({
-        code: "PIECE_UNDER_ATTACK",
+        code: "LEGAL_CAPTURE_AVAILABLE",
         subjectSide: "white",
         target: { side: "white", type: "q", square: "b2" },
         evidenceMoves: ["Bxb2"],
@@ -64,8 +163,10 @@ describe("deterministic move commentary", () => {
 
     const blackMove = comments.find((item) => item.mainlinePly === 46)!;
     expect(blackMove.position).toHaveLength(46);
-    expect(blackMove.text).toContain("23...Bxb2");
-    expect(blackMove.text).toContain("ăn hậu Trắng ở b2");
+    expect(blackMove.plan.event?.id).toBe(whiteMove.plan.event?.id);
+    expect(blackMove.text).toContain("tận dụng sơ hở vừa mở ra");
+    expect(blackMove.text).toContain("bắt hậu Trắng");
+    expect(blackMove.text).not.toContain("đường tượng");
     expect(blackMove.facts).toContainEqual(
       expect.objectContaining({
         code: "CAPTURED_PIECE",
@@ -74,7 +175,96 @@ describe("deterministic move commentary", () => {
         confidence: "verified",
       }),
     );
-    expect(comments[0]?.text).toContain("chưa có dữ kiện đủ chắc");
+  });
+
+  test("separates legal capture, engine recommendation, and realized material capture", () => {
+    const root = treeFromPgn();
+    const plainContexts = buildMoveContexts(root, "fixture-game", []);
+    const c4WithoutEngine = plainContexts.find((context) => context.mainlinePly === 45)!;
+    const c4PlainFacts = getChessFacts(c4WithoutEngine);
+
+    expect(c4PlainFacts).toContainEqual(
+      expect.objectContaining({ code: "LEGAL_CAPTURE_AVAILABLE", evidenceMoves: ["Bxb2"] }),
+    );
+    expect(c4PlainFacts.some((fact) => fact.code === "ENGINE_RECOMMENDED_CAPTURE")).toBe(false);
+
+    const analysis = Array.from({ length: 46 }, () => analysisAt("", 0));
+    analysis[45] = analysisAt("Bxb2", -620);
+    const analyzedC4 = buildMoveContexts(root, "fixture-game", analysis).find(
+      (context) => context.mainlinePly === 45,
+    )!;
+    expect(getChessFacts(analyzedC4)).toContainEqual(
+      expect.objectContaining({ code: "ENGINE_RECOMMENDED_CAPTURE", evidenceMoves: ["Bxb2"] }),
+    );
+
+    analysis[45] = analysisAt("a6", -620);
+    const mismatchedReply = buildMoveContexts(root, "fixture-game", analysis).find(
+      (context) => context.mainlinePly === 45,
+    )!;
+    expect(getChessFacts(mismatchedReply).some((fact) => fact.code === "ENGINE_RECOMMENDED_CAPTURE")).toBe(
+      false,
+    );
+
+    const actualCapture = plainContexts.find((context) => context.mainlinePly === 46)!;
+    expect(getChessFacts(actualCapture)).toContainEqual(
+      expect.objectContaining({
+        code: "CAPTURED_PIECE",
+        target: expect.objectContaining({ type: "q", square: "b2" }),
+      }),
+    );
+  });
+
+  test("resolves automatic perspective only from an unambiguous player identity match", () => {
+    const headers = { ...defaultTree().headers, white: "Rofu1", black: "Thaidev" };
+    const blackSessions = [{ player: "  THAIDEV ", updatedAt: 0 }];
+    expect(resolveViewerSide("auto", headers, blackSessions)).toBe("black");
+    expect(
+      resolveViewerSide("auto", { ...headers, orientation: "white" }, blackSessions),
+    ).toBe("black");
+    expect(resolveViewerSide("auto", headers, [{ player: "Rofu1", updatedAt: 0 }])).toBe("white");
+    expect(
+      resolveViewerSide("auto", headers, [
+        { player: "Rofu1", updatedAt: 0 },
+        { player: "Thaidev", updatedAt: 0 },
+      ]),
+    ).toBe("neutral");
+    expect(resolveViewerSide("auto", headers, [])).toBe("neutral");
+    expect(resolveViewerSide("white", headers, [{ player: "Thaidev", updatedAt: 0 }])).toBe("white");
+  });
+
+  test("re-renders stored V2 plans locally for White, Black, and Neutral perspectives", () => {
+    const root = treeFromPgn();
+    const comments = generateCommentary(root, "fixture-game", []);
+    for (const generated of comments.filter((comment) => [45, 46].includes(comment.mainlinePly))) {
+      const node = getNodeAtPath(root, generated.position);
+      node.generatedComment = {
+        schemaVersion: 2,
+        gameId: "fixture-game",
+        ply: generated.mainlinePly,
+        text: generated.text,
+        plan: generated.plan,
+      };
+    }
+
+    const headers = { ...defaultTree().headers, white: "Rofu1", black: "Thaidev" };
+    const white = getCommentsForPerspective(root, "white", headers, []);
+    const black = getCommentsForPerspective(root, "black", headers, []);
+    const neutral = getCommentsForPerspective(root, "neutral", headers, []);
+    const whiteC4 = white.find((item) => item.comment.ply === 45)!.comment.text;
+    const blackC4 = black.find((item) => item.comment.ply === 45)!.comment.text;
+    const blackCapture = black.find((item) => item.comment.ply === 46)!.comment.text;
+    const whiteCapture = white.find((item) => item.comment.ply === 46)!.comment.text;
+
+    expect(whiteC4).toContain("Bạn đẩy tốt");
+    expect(blackC4).toContain("Đối thủ đẩy tốt");
+    expect(blackC4).toContain("tượng của bạn");
+    expect(blackCapture).toContain("Bạn tận dụng sơ hở");
+    expect(whiteCapture).toContain("Đối thủ tận dụng sơ hở");
+    expect(blackCapture).toContain("hậu của đối thủ");
+    expect(whiteCapture).toContain("hậu của bạn");
+    expect(neutral.find((item) => item.comment.ply === 45)?.comment.text).toContain("Trắng đẩy tốt");
+    expect(neutral.find((item) => item.comment.ply === 46)?.comment.text).toContain("Đen tận dụng");
+    expect(root.children[0]?.generatedComment).toBeUndefined();
   });
 
   test("returns no chess facts for invalid FEN or SAN", () => {
@@ -90,7 +280,8 @@ describe("deterministic move commentary", () => {
       annotation: null,
       scoreBefore: null,
       scoreAfter: null,
-      bestLineSan: [],
+      bestAlternativeBefore: null,
+      bestReplyAfter: null,
     };
     expect(getChessFacts(invalid)).toEqual([]);
   });
@@ -108,7 +299,8 @@ describe("deterministic move commentary", () => {
       annotation: null,
       scoreBefore: null,
       scoreAfter: null,
-      bestLineSan: [],
+      bestAlternativeBefore: null,
+      bestReplyAfter: null,
     };
     expect(getChessFacts(mate)).toContainEqual(
       expect.objectContaining({ code: "MATE", subjectSide: "white", confidence: "verified" }),
@@ -119,6 +311,24 @@ describe("deterministic move commentary", () => {
     expect(getStableGameId("position", ["e2e4", "e7e5"])).not.toBe(
       getStableGameId("position", ["e2e4", "c7c5"]),
     );
+  });
+
+  test("mate-threat narration is perspective-correct and grammatically complete", () => {
+    const text = renderCommentaryPlan(
+      {
+        moveId: "mate-threat-test:5",
+        gameId: "mate-threat-test",
+        mainlinePly: 5,
+        mover: "white",
+        moveNumber: 3,
+        san: "Qh5",
+        intent: "mate-threat",
+        facts: [],
+      },
+      "black",
+    );
+
+    expect(text).toContain("Đối thủ vừa để bạn có cơ hội chiếu hết ngay");
   });
 
   test("describes castling factually without promising a safer king", () => {
@@ -148,8 +358,54 @@ describe("deterministic move commentary", () => {
     const castle = generateCommentary(state.root, "castle-test", []).find(
       (item) => item.mainlinePly === 7,
     )!;
-    expect(castle.text).toContain("4.O-O nhập thành, chuyển vua và xe bằng một nước đi.");
+    expect(castle.text).toContain("Trắng nhập thành");
+    expect(castle.text).toContain("đưa xe tham gia ván đấu");
     expect(castle.text).not.toContain("an toàn hơn");
+  });
+
+  test("manual quality case: Black receives natural, perspective-correct tactical coaching", () => {
+    const comments = generateCommentary(treeFromPgn(), "fixture-game", [], { viewerSide: "black" });
+    const exposure = comments.find((comment) => comment.mainlinePly === 45)!;
+    const capture = comments.find((comment) => comment.mainlinePly === 46)!;
+
+    expect(exposure.text).toBe(
+      "Đối thủ đẩy tốt khỏi đường chéo do tượng của bạn kiểm soát, khiến hậu của đối thủ lọt vào tầm bắt. Trước khi đẩy quân chắn, hãy kiểm tra đường tấn công nó đang che.",
+    );
+    expect(capture.text).toBe("Bạn tận dụng sơ hở vừa tạo ra và bắt được hậu của đối thủ.");
+  });
+
+  test("manual quality case: the opening introduction is translated and appears once", () => {
+    const comments = generateCommentary(treeFromPgn(), "fixture-game", [], {
+      openingName: "Scandinavian Defense: Blackburne Gambit",
+      viewerSide: "neutral",
+    });
+    const opening = comments.find((comment) => comment.plan.openingName);
+
+    expect(opening?.text).toBe(
+      "Ván này theo Phòng thủ Scandinavia: Đen phản công trung tâm ngay từ đầu. Sau loạt đổi tốt, hãy phát triển quân nhẹ trước khi tìm cách ăn thêm tốt.",
+    );
+    expect(comments.filter((comment) => comment.plan.openingName)).toHaveLength(1);
+  });
+
+  test("manual quality case: a quiet move does not receive a fabricated explanation", () => {
+    const comments = generateCommentary(treeFromPgn("1. e4 *"), "quiet-game", []);
+    expect(comments).toEqual([]);
+  });
+
+  test("manual quality case: an engine-recommended capture stays conditional until played", () => {
+    const prefix = goldenMoves.slice(0, goldenMoves.indexOf(" Bxb2 24."));
+    const root = treeFromPgn(`${prefix} *`);
+    const analysis = Array.from({ length: 46 }, () => analysisAt("", 0));
+    analysis[45] = analysisAt("Bxb2", -620, 32);
+    const exposure = generateCommentary(root, "unfinished-game", analysis, {
+      viewerSide: "black",
+    }).find((comment) => comment.mainlinePly === 45)!;
+
+    expect(exposure.plan.event?.result).toBe("engine-recommended");
+    expect(exposure.text).toContain("Máy phân tích ưu tiên nước bắt hậu");
+    expect(exposure.text).toContain("kiểm tra xem quân bắt có thể bị đổi lại không");
+    expect(exposure.text).not.toContain("Ở nước tiếp theo");
+    expect(exposure.text).not.toMatch(/đã bắt được|bắt buộc phải|thắng chắc/i);
   });
 
   test("preserves a human note and replaces generated text idempotently", () => {
@@ -197,6 +453,39 @@ describe("deterministic move commentary", () => {
     expect(store.getState().root.children[1]?.generatedComment).toBeUndefined();
   });
 
+  test("invalidates legacy text-only comments on perspective change and preserves human notes", () => {
+    const state = defaultTree();
+    state.root.children.push({
+      ...state.root,
+      san: "e4",
+      halfMoves: 1,
+      children: [],
+      comment: "keep this note",
+      generatedComment: {
+        schemaVersion: 1,
+        gameId: "legacy-game",
+        ply: 1,
+        text: "Legacy generated text.",
+      },
+    });
+    const store = createTreeStore(undefined, state);
+    const updates = getCommentsForPerspective(
+      store.getState().root,
+      "black",
+      store.getState().headers,
+      [],
+    );
+
+    expect(updates).toEqual([]);
+    store.getState().setCommentaryPerspective("black");
+    store.getState().setGeneratedComments(updates);
+
+    const node = store.getState().root.children[0]!;
+    expect(node.generatedComment).toBeUndefined();
+    expect(node.comment).toBe("keep this note");
+    expect(store.getState().commentaryPerspective).toBe("black");
+  });
+
   test("round-trips generated PGN markers without changing the human comment", () => {
     const original = "Ghi chú của người chơi.";
     const metadata = {
@@ -216,6 +505,21 @@ describe("deterministic move commentary", () => {
     ).toEqual({
       comment: "{}",
       generatedComment: { schemaVersion: 1, gameId: "pgn-import", ply: 3, text: "Tự động." },
+    });
+
+    const generated = generateCommentary(treeFromPgn(), "fixture-game", []).find(
+      (comment) => comment.mainlinePly === 45,
+    )!;
+    const v2 = {
+      schemaVersion: 2 as const,
+      gameId: "fixture-game",
+      ply: 45,
+      text: generated.text,
+      plan: generated.plan,
+    };
+    expect(extractGeneratedComment(mergeGeneratedComment(original, v2))).toEqual({
+      comment: original,
+      generatedComment: v2,
     });
   });
 });

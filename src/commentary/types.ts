@@ -1,20 +1,58 @@
-import type { MoveAnalysis, Score } from "@/bindings";
+import type { BestMoves, MoveAnalysis, Score } from "@/bindings";
 import type { Annotation } from "@/utils/annotation";
 import type { TreeNode } from "@/utils/treeReducer";
 import { Chess } from "chess.js";
 import { getAnnotation } from "@/utils/score";
 
 export type Side = "white" | "black";
+export type ViewerSide = Side | "neutral";
+export type CommentaryIntent =
+  | "mate"
+  | "mate-threat"
+  | "opened-attack"
+  | "capture-opportunity"
+  | "capture"
+  | "check"
+  | "castling"
+  | "development"
+  | "opening";
+
+export interface CommentaryEvent {
+  id: string;
+  role: "cause" | "exploitation";
+  relatedPly: number;
+  result: "actual" | "engine-recommended" | "legal-capture";
+}
+
+export interface CommentaryEngineEvidence {
+  bestAlternativeBefore?: { san: string; depth: number; score: Score };
+  bestReplyAfter?: { san: string; depth: number; score: Score };
+}
+
+export interface CommentaryPlan {
+  moveId: string;
+  gameId: string;
+  mainlinePly: number;
+  mover: Side;
+  moveNumber: number;
+  san: string;
+  intent: CommentaryIntent;
+  facts: ChessFact[];
+  event?: CommentaryEvent;
+  openingName?: string;
+  engineEvidence?: CommentaryEngineEvidence;
+}
 
 export type FactCode =
   | "CAPTURED_PIECE"
   | "OPENED_ATTACK_LINE"
+  | "LEGAL_CAPTURE_AVAILABLE"
+  | "ENGINE_RECOMMENDED_CAPTURE"
   | "CHECK"
   | "MATE"
   | "ALLOWS_MATE"
   | "CASTLING"
   | "DEVELOPMENT"
-  | "PIECE_UNDER_ATTACK"
   | "FORK_CANDIDATE"
   | "HANGING_PIECE_CANDIDATE";
 
@@ -33,6 +71,7 @@ export interface ChessFact {
   target?: FactPiece;
   squares?: string[];
   evidenceMoves?: string[];
+  /** Verified means the stated observation is proven; it does not imply a forced or lasting win. */
   confidence: "verified" | "heuristic";
   source: "patzer" | "adapter";
 }
@@ -49,9 +88,8 @@ export interface MoveContext {
   annotation: Annotation | null;
   scoreBefore: Score | null;
   scoreAfter: Score | null;
-  bestMoveSan?: string;
-  bestLineSan: string[];
-  sourceDepth?: number;
+  bestAlternativeBefore: BestMoves | null;
+  bestReplyAfter: BestMoves | null;
 }
 
 export interface GeneratedComment {
@@ -59,6 +97,7 @@ export interface GeneratedComment {
   position: number[];
   text: string;
   facts: ChessFact[];
+  plan: CommentaryPlan;
 }
 
 /** Stable across report retries and variation changes; identity follows the actual game line. */
@@ -130,9 +169,8 @@ export function buildMoveContexts(
         annotation,
         scoreBefore: previousScore,
         scoreAfter: currentScore,
-        bestMoveSan: best?.sanMoves?.[0],
-        bestLineSan: best?.sanMoves ?? [],
-        sourceDepth: afterAnalysis?.best?.[0]?.depth ?? child.depth ?? undefined,
+        bestAlternativeBefore: best ?? null,
+        bestReplyAfter: afterAnalysis?.best?.[0] ?? null,
       });
     } catch {
       // Skip an invalid tree edge safely. PGN import and the engine report remain usable.

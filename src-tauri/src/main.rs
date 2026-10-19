@@ -107,6 +107,24 @@ async fn close_splashscreen(window: Window) -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+#[specta::specta]
+fn get_bundled_engine_path(app: tauri::AppHandle) -> Result<String, String> {
+    let path = app
+        .path()
+        .resolve(
+            "stockfish/stockfish.exe",
+            tauri::path::BaseDirectory::Resource,
+        )
+        .map_err(|error| format!("Could not resolve bundled Stockfish: {error}"))?;
+
+    if !path.is_file() {
+        return Err(format!("Bundled Stockfish is missing: {}", path.display()));
+    }
+
+    Ok(path.to_string_lossy().into_owned())
+}
+
 pub fn file_from_args(args: &[String], cwd: &str) -> Option<String> {
     let mut args = args.iter().skip(1);
     let first = args.next()?;
@@ -120,13 +138,19 @@ pub fn file_from_args(args: &[String], cwd: &str) -> Option<String> {
     if args.next().is_some() || file.to_ascii_lowercase().starts_with("encroissant:") {
         return None;
     }
-    Some(std::path::Path::new(cwd).join(file).to_string_lossy().into_owned())
+    Some(
+        std::path::Path::new(cwd)
+            .join(file)
+            .to_string_lossy()
+            .into_owned(),
+    )
 }
 
 fn main() {
     let specta_builder = tauri_specta::Builder::new()
         .commands(tauri_specta::collect_commands!(
             close_splashscreen,
+            get_bundled_engine_path,
             get_best_moves,
             analyze_game,
             cancel_analysis,

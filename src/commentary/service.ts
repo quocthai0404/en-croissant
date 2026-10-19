@@ -1,9 +1,23 @@
 import { Chess, SQUARES, type PieceSymbol, type Square } from "chess.js";
 import { moveMotifs, VALUE, type PieceRef } from "./vendor/patzer-tactics";
-import type { ChessFact, FactPiece, GeneratedComment, MoveContext, Side } from "./types";
-import type { TreeNode } from "@/utils/treeReducer";
+import type {
+  ChessFact,
+  CommentaryEvent,
+  CommentaryIntent,
+  CommentaryPlan,
+  FactPiece,
+  GeneratedComment,
+  MoveContext,
+  Side,
+  ViewerSide,
+} from "./types";
+import { treeIterator } from "@/utils/treeReducer";
+import type { GameHeaders, GeneratedCommentMetadata, TreeNode } from "@/utils/treeReducer";
 import type { MoveAnalysis } from "@/bindings";
 import { buildMoveContexts } from "./types";
+import type { CommentaryPerspective } from "./perspective";
+import { resolveViewerSide } from "./perspective";
+import type { Session } from "@/utils/session";
 
 const PIECE_NAMES: Record<PieceSymbol, string> = {
   p: "tốt",
@@ -210,7 +224,7 @@ export function getChessFacts(context: MoveContext): ChessFact[] {
       if (attacker) {
         facts.push({
           id: `${context.mainlinePly}:attacked:${piece.square}`,
-          code: "PIECE_UNDER_ATTACK",
+          code: "LEGAL_CAPTURE_AVAILABLE",
           subjectSide: mover,
           actor: factPiece(otherSide(mover), { type: attacker.type, square: capture.from }),
           target: factPiece(mover, piece),
@@ -218,6 +232,18 @@ export function getChessFacts(context: MoveContext): ChessFact[] {
           confidence: "verified",
           source: "adapter",
         });
+        if (context.bestReplyAfter?.sanMoves[0] === capture.san) {
+          facts.push({
+            id: `${context.mainlinePly}:engine-recommends-capture:${piece.square}`,
+            code: "ENGINE_RECOMMENDED_CAPTURE",
+            subjectSide: mover,
+            actor: factPiece(otherSide(mover), { type: attacker.type, square: capture.from }),
+            target: factPiece(mover, piece),
+            evidenceMoves: [capture.san],
+            confidence: "verified",
+            source: "adapter",
+          });
+        }
         continue;
       }
     }
@@ -236,103 +262,311 @@ export function getChessFacts(context: MoveContext): ChessFact[] {
   return facts;
 }
 
-const MOVE_ANNOTATIONS = ["!!", "!", "!?", "?!", "?", "??"] as const;
-
-function moveLabel(context: MoveContext): string {
-  const notation = context.mover === "black" ? `${context.moveNumber}...${context.san}` : `${context.moveNumber}.${context.san}`;
-  return `${notation}${context.annotation && MOVE_ANNOTATIONS.includes(context.annotation as (typeof MOVE_ANNOTATIONS)[number]) ? context.annotation : ""}`;
+function hasSameTarget(first: ChessFact, second: ChessFact): boolean {
+  return Boolean(
+    first.target &&
+      second.target &&
+      first.target.side === second.target.side &&
+      first.target.type === second.target.type &&
+      first.target.square === second.target.square,
+  );
 }
 
-function opponentReplyLabel(context: MoveContext, san: string): string {
-  return context.mover === "white"
-    ? `${context.moveNumber}...${san}`
-    : `${context.moveNumber + 1}.${san}`;
-}
+function planTacticalEvents(
+  contexts: MoveContext[],
+  factsByContext: ChessFact[][],
+): Map<number, CommentaryEvent> {
+  const events = new Map<number, CommentaryEvent>();
 
-function renderTemplate(context: MoveContext, facts: ChessFact[]): string {
-  const label = moveLabel(context);
-  const opponent = sideName(otherSide(context.mover));
-  const mover = sideName(context.mover);
-  const primary = [...facts]
-    .filter((fact) => fact.confidence === "verified")
-    .sort((a, b) => priority(a.code) - priority(b.code))[0];
+  contexts.forEach((context, index) => {
+    const facts = factsByContext[index] ?? [];
+    const exposure =
+      facts.find((fact) => fact.code === "OPENED_ATTACK_LINE" && fact.target) ??
+      facts.find((fact) => fact.code === "LEGAL_CAPTURE_AVAILABLE" && fact.target);
+    if (!exposure?.target) return;
 
-  if (primary?.code === "ALLOWS_MATE") {
-    return `Sau ${label}, ${opponent} có thể chơi ${primary.evidenceMoves?.[0] ?? "nước chiếu hết"} chiếu hết. Trước khi thực hiện nước đi, hãy kiểm tra các nước chiếu và đòn chiếu hết của đối thủ.`;
-  }
-  if (primary?.code === "MATE") return `${label} chiếu hết; ván cờ kết thúc.`;
-  if (primary?.code === "OPENED_ATTACK_LINE" && primary.actor && primary.target) {
-    const actorName = PIECE_NAMES[primary.actor.type];
-    const targetName = PIECE_NAMES[primary.target.type];
-    const blockerName = primary.blocker ? PIECE_NAMES[primary.blocker.type] : "quân";
-    const blockerSquare = primary.blocker?.square ?? "ô cũ";
-    const path = (primary.squares ?? []).join("–");
-    const reply = primary.evidenceMoves?.[0]
-      ? opponentReplyLabel(context, primary.evidenceMoves[0])
-      : "nước bắt quân";
-    return `${label} làm ${blockerName} ${mover} rời ${blockerSquare}, mở đường ${path} cho ${actorName} ${opponent}. ${targetName} ${mover} ở ${primary.target.square} nên ${opponent} có thể đáp ${reply} để ăn ${targetName}. Trước khi di chuyển quân chắn, hãy kiểm tra những đường tấn công mà nó đang che.`;
-  }
-  if (primary?.code === "PIECE_UNDER_ATTACK" && primary.target && primary.evidenceMoves?.[0]) {
-    const target = PIECE_NAMES[primary.target.type];
-    const reply = opponentReplyLabel(context, primary.evidenceMoves[0]);
-    return `Sau ${label}, ${opponent} có thể chơi ${reply} để bắt ${target} ${mover} ở ${primary.target.square}. Kiểm tra xem quân này có được bảo vệ hoặc có thể đổi lại không.`;
-  }
-  if (primary?.code === "CAPTURED_PIECE" && primary.target) {
-    const target = PIECE_NAMES[primary.target.type];
-    if (primary.target.type === "q" || primary.target.type === "r") {
-      return `${label} ăn ${target} ${opponent} ở ${primary.target.square}.`;
+    const actualCapture = (factsByContext[index + 1] ?? []).find(
+      (fact) => fact.code === "CAPTURED_PIECE" && hasSameTarget(exposure, fact),
+    );
+    const engineCapture = facts.find(
+      (fact) => fact.code === "ENGINE_RECOMMENDED_CAPTURE" && hasSameTarget(exposure, fact),
+    );
+    const legalCapture = facts.find(
+      (fact) => fact.code === "LEGAL_CAPTURE_AVAILABLE" && hasSameTarget(exposure, fact),
+    );
+    const next = contexts[index + 1];
+    const eventId = `${context.gameId}:capture:${context.mainlinePly}:${exposure.target.square}`;
+
+    if (actualCapture && next) {
+      events.set(context.mainlinePly, {
+        id: eventId,
+        role: "cause",
+        relatedPly: next.mainlinePly,
+        result: "actual",
+      });
+      events.set(next.mainlinePly, {
+        id: eventId,
+        role: "exploitation",
+        relatedPly: context.mainlinePly,
+        result: "actual",
+      });
+    } else if (engineCapture) {
+      events.set(context.mainlinePly, {
+        id: eventId,
+        role: "cause",
+        relatedPly: context.mainlinePly + 1,
+        result: "engine-recommended",
+      });
+    } else if (legalCapture) {
+      events.set(context.mainlinePly, {
+        id: eventId,
+        role: "cause",
+        relatedPly: context.mainlinePly + 1,
+        result: "legal-capture",
+      });
     }
-    return `${label} ăn ${target} của ${opponent}.`;
-  }
-  if (primary?.code === "CHECK") return `${label} chiếu vua ${opponent}; hãy kiểm tra các nước đáp bắt buộc.`;
-  if (primary?.code === "CASTLING") return `${label} nhập thành, chuyển vua và xe bằng một nước đi.`;
-  if (primary?.code === "DEVELOPMENT" && primary.actor) {
-    return `${label} đưa ${PIECE_NAMES[primary.actor.type]} ra khỏi hàng xuất phát.`;
-  }
+  });
 
-  if (["??", "?", "?!"].includes(context.annotation ?? "") && context.bestMoveSan) {
-    const assessment = context.annotation === "??" ? "rất yếu" : "chưa chính xác";
-    return `Engine hiện tại đánh giá ${label} là nước ${assessment}; phương án được đề xuất là ${context.bestMoveSan}. Chưa đủ dữ kiện để khẳng định một nguyên nhân chiến thuật cụ thể.`;
-  }
-  return `${label} tiếp tục ván cờ; hiện chưa có dữ kiện đủ chắc để giải thích mục tiêu sâu hơn.`;
+  return events;
 }
 
-function priority(code: ChessFact["code"]): number {
-  switch (code) {
-    case "MATE":
-      return 0;
-    case "ALLOWS_MATE":
-      return 1;
-    case "OPENED_ATTACK_LINE":
-      return 2;
-    case "PIECE_UNDER_ATTACK":
-      return 3;
-    case "CAPTURED_PIECE":
-      return 4;
-    case "CHECK":
-      return 5;
-    case "CASTLING":
-      return 6;
-    case "DEVELOPMENT":
-      return 7;
-    default:
-      return 100;
+function chooseIntent(
+  facts: ChessFact[],
+  event: CommentaryEvent | undefined,
+  openingName: string | undefined,
+): CommentaryIntent | null {
+  if (facts.some((fact) => fact.code === "MATE")) return "mate";
+  if (facts.some((fact) => fact.code === "ALLOWS_MATE")) return "mate-threat";
+  if (event?.role === "exploitation") return "capture";
+  if (facts.some((fact) => fact.code === "OPENED_ATTACK_LINE")) return "opened-attack";
+  if (
+    facts.some(
+      (fact) =>
+        fact.code === "ENGINE_RECOMMENDED_CAPTURE" || fact.code === "LEGAL_CAPTURE_AVAILABLE",
+    )
+  ) {
+    return "capture-opportunity";
   }
+  if (
+    facts.some(
+      (fact) =>
+        fact.code === "CAPTURED_PIECE" && fact.target && ["n", "b", "r", "q"].includes(fact.target.type),
+    )
+  ) {
+    return "capture";
+  }
+  if (facts.some((fact) => fact.code === "CHECK")) return "check";
+  if (facts.some((fact) => fact.code === "CASTLING")) return "castling";
+  if (facts.some((fact) => fact.code === "DEVELOPMENT")) return "development";
+  if (openingName) return "opening";
+  return null;
+}
+
+function engineSummary(
+  line: MoveContext["bestAlternativeBefore"],
+): { san: string; depth: number; score: MoveContext["scoreBefore"] & {} } | undefined {
+  const san = line?.sanMoves[0];
+  return san && line ? { san, depth: line.depth, score: line.score } : undefined;
+}
+
+function makePlan(
+  context: MoveContext,
+  facts: ChessFact[],
+  intent: CommentaryIntent,
+  event: CommentaryEvent | undefined,
+  openingName: string | undefined,
+): CommentaryPlan {
+  const bestAlternativeBefore = engineSummary(context.bestAlternativeBefore);
+  const bestReplyAfter = engineSummary(context.bestReplyAfter);
+  return {
+    moveId: `${context.gameId}:${context.mainlinePly}`,
+    gameId: context.gameId,
+    mainlinePly: context.mainlinePly,
+    mover: context.mover,
+    moveNumber: context.moveNumber,
+    san: context.san,
+    intent,
+    facts,
+    ...(event ? { event } : {}),
+    ...(openingName ? { openingName } : {}),
+    ...(bestAlternativeBefore || bestReplyAfter
+      ? {
+          engineEvidence: {
+            ...(bestAlternativeBefore ? { bestAlternativeBefore } : {}),
+            ...(bestReplyAfter ? { bestReplyAfter } : {}),
+          },
+        }
+      : {}),
+  };
+}
+
+function sideReference(side: Side, viewerSide: ViewerSide): string {
+  if (viewerSide === "neutral") return sideName(side);
+  return side === viewerSide ? "bạn" : "đối thủ";
+}
+
+function capitalizeFirst(value: string): string {
+  return value.replace(/^./u, (letter) => letter.toLocaleUpperCase("vi-VN"));
+}
+
+function sidePossessive(side: Side, viewerSide: ViewerSide): string {
+  if (viewerSide === "neutral") return sideName(side);
+  return side === viewerSide ? "của bạn" : "của đối thủ";
+}
+
+function openingIntroduction(openingName: string): string {
+  const normalized = openingName.toLowerCase();
+  if (normalized.includes("scandinavian defense")) {
+    return "Ván này theo Phòng thủ Scandinavia: Đen phản công trung tâm ngay từ đầu. Sau loạt đổi tốt, hãy phát triển quân nhẹ trước khi tìm cách ăn thêm tốt.";
+  }
+  return "";
+}
+
+function renderOpenedAttack(plan: CommentaryPlan, viewerSide: ViewerSide): string {
+  const fact = plan.facts.find((candidate) => candidate.code === "OPENED_ATTACK_LINE");
+  if (!fact?.actor || !fact.target) return "";
+
+  const actorName = PIECE_NAMES[fact.actor.type];
+  const blockerName = fact.blocker ? PIECE_NAMES[fact.blocker.type] : "quân";
+  const targetName = PIECE_NAMES[fact.target.type];
+  const mover = sideReference(plan.mover, viewerSide);
+  const actorDescription =
+    viewerSide === "neutral"
+      ? `${actorName} ${sideName(fact.actor.side)}`
+      : `${actorName} ${sidePossessive(fact.actor.side, viewerSide)}`;
+  const targetPossessive = sidePossessive(fact.target.side, viewerSide);
+  const firstSentence =
+    viewerSide === "neutral"
+      ? `${sideName(plan.mover)} đẩy ${blockerName} khỏi đường chéo do ${actorDescription} kiểm soát, khiến ${targetName} ${sideName(fact.target.side)} lọt vào tầm bắt.`
+      : `${mover === "bạn" ? "Bạn" : "Đối thủ"} đẩy ${blockerName} khỏi đường chéo do ${actorDescription} kiểm soát, khiến ${targetName} ${targetPossessive} lọt vào tầm bắt.`;
+
+  if (plan.event?.result === "actual") {
+    return `${firstSentence} Trước khi đẩy quân chắn, hãy kiểm tra đường tấn công nó đang che.`;
+  }
+
+  const engineRecommended = plan.event?.result === "engine-recommended";
+  const opportunity = engineRecommended
+    ? `Máy phân tích ưu tiên nước bắt ${targetName} ${targetPossessive} bằng ${actorName}; hãy kiểm tra xem quân bắt có thể bị đổi lại không.`
+    : `${actorDescription} có nước bắt ${targetName} ${targetPossessive} hợp lệ ngay; hãy kiểm tra khả năng đổi lại trước khi kết luận sẽ hơn quân.`;
+  return `${firstSentence} ${opportunity} Trước khi đẩy quân chắn, hãy kiểm tra đường tấn công nó đang che.`;
+}
+
+function renderCaptureOpportunity(plan: CommentaryPlan, viewerSide: ViewerSide): string {
+  const fact = plan.facts.find(
+    (candidate) =>
+      candidate.code === "ENGINE_RECOMMENDED_CAPTURE" ||
+      candidate.code === "LEGAL_CAPTURE_AVAILABLE",
+  );
+  if (!fact?.actor || !fact.target) return "";
+  const targetName = PIECE_NAMES[fact.target.type];
+  const actorName = PIECE_NAMES[fact.actor.type];
+  const targetPossessive = sidePossessive(fact.target.side, viewerSide);
+  if (fact.code === "ENGINE_RECOMMENDED_CAPTURE") {
+    return `Máy phân tích ưu tiên nước bắt ${targetName} ${targetPossessive} bằng ${actorName}. Hãy kiểm tra khả năng đổi lại trước khi kết luận sẽ hơn quân.`;
+  }
+  return `${capitalizeFirst(`${actorName} ${sidePossessive(fact.actor.side, viewerSide)}`)} có nước bắt ${targetName} ${targetPossessive} hợp lệ ngay. Hãy kiểm tra khả năng đổi lại trước khi đánh giá đây là lợi thế vật chất.`;
+}
+
+function renderCapture(plan: CommentaryPlan, viewerSide: ViewerSide): string {
+  const fact = plan.facts.find((candidate) => candidate.code === "CAPTURED_PIECE");
+  if (!fact?.target) return "";
+  const targetName = PIECE_NAMES[fact.target.type];
+  const mover = sideReference(plan.mover, viewerSide);
+  if (plan.event?.role === "exploitation") {
+    if (viewerSide === "neutral") {
+      return `${sideName(plan.mover)} tận dụng sơ hở vừa mở ra để bắt ${targetName} ${sideName(fact.target.side)}.`;
+    }
+    return mover === "bạn"
+      ? `Bạn tận dụng sơ hở vừa tạo ra và bắt được ${targetName} ${sidePossessive(fact.target.side, viewerSide)}.`
+      : `Đối thủ tận dụng sơ hở vừa mở ra để bắt ${targetName} ${sidePossessive(fact.target.side, viewerSide)}.`;
+  }
+  return `${mover === "bạn" ? "Bạn" : mover} bắt được ${targetName} ${sidePossessive(fact.target.side, viewerSide)}; hãy kiểm tra xem quân vừa bắt có bị đổi lại không.`;
+}
+
+export function renderCommentaryPlan(plan: CommentaryPlan, viewerSide: ViewerSide): string {
+  if (plan.intent === "mate") {
+    return `${capitalizeFirst(sideReference(plan.mover, viewerSide))} chiếu hết, ván cờ kết thúc.`;
+  }
+  if (plan.intent === "mate-threat") {
+    const opponent = sideReference(otherSide(plan.mover), viewerSide);
+    return `${capitalizeFirst(sideReference(plan.mover, viewerSide))} vừa để ${opponent} có cơ hội chiếu hết ngay. Trước mỗi nước đi, hãy kiểm tra các nước chiếu của đối thủ.`;
+  }
+  if (plan.intent === "opened-attack") return renderOpenedAttack(plan, viewerSide);
+  if (plan.intent === "capture-opportunity") return renderCaptureOpportunity(plan, viewerSide);
+  if (plan.intent === "capture") return renderCapture(plan, viewerSide);
+  if (plan.intent === "check") {
+    return `${capitalizeFirst(sideReference(plan.mover, viewerSide))} chiếu vua ${sideReference(otherSide(plan.mover), viewerSide)}; hãy kiểm tra các cách đỡ chiếu và những quân đang bị lộ.`;
+  }
+  if (plan.intent === "castling") {
+    return `${capitalizeFirst(sideReference(plan.mover, viewerSide))} nhập thành, đưa vua về phía cánh và đưa xe tham gia ván đấu.`;
+  }
+  if (plan.intent === "development") {
+    const fact = plan.facts.find((candidate) => candidate.code === "DEVELOPMENT");
+    if (!fact?.actor) return "";
+    return `${capitalizeFirst(sideReference(plan.mover, viewerSide))} đưa ${PIECE_NAMES[fact.actor.type]} ra khỏi vị trí ban đầu, thêm một quân vào cuộc.`;
+  }
+  if (plan.intent === "opening" && plan.openingName) {
+    return openingIntroduction(plan.openingName);
+  }
+  return "";
+}
+
+export function getCommentsForPerspective(
+  root: TreeNode,
+  perspective: CommentaryPerspective,
+  headers: GameHeaders,
+  sessions: Session[],
+): {
+  position: number[];
+  comment: Extract<GeneratedCommentMetadata, { schemaVersion: 2 }>;
+}[] {
+  const viewerSide = resolveViewerSide(perspective, headers, sessions);
+  const comments: {
+    position: number[];
+    comment: Extract<GeneratedCommentMetadata, { schemaVersion: 2 }>;
+  }[] = [];
+
+  for (const { position, node } of treeIterator(root)) {
+    const existing = node.generatedComment;
+    if (!existing || existing.schemaVersion !== 2) continue;
+    const text = renderCommentaryPlan(existing.plan, viewerSide);
+    if (!text) continue;
+    comments.push({ position, comment: { ...existing, text } });
+  }
+
+  return comments;
 }
 
 export function generateCommentary(
   root: TreeNode,
   gameId: string,
   analysis: MoveAnalysis[],
+  options: { openingName?: string; viewerSide?: ViewerSide } = {},
 ): GeneratedComment[] {
   const contexts = buildMoveContexts(root, gameId, analysis);
-  return contexts.map((context) => {
-    const facts = getChessFacts(context);
-    return {
+  const factsByContext = contexts.map((context) => getChessFacts(context));
+  const events = planTacticalEvents(contexts, factsByContext);
+  const viewerSide = options.viewerSide ?? "neutral";
+  const comments: GeneratedComment[] = [];
+
+  contexts.forEach((context, index) => {
+    const facts = (factsByContext[index] ?? []).filter((fact) => fact.confidence === "verified");
+    const event = events.get(context.mainlinePly);
+    const openingName = index === 0 ? options.openingName : undefined;
+    const intent = chooseIntent(facts, event, openingName);
+    if (!intent) return;
+
+    const plan = makePlan(context, facts, intent, event, openingName);
+    const text = renderCommentaryPlan(plan, viewerSide);
+    if (!text) return;
+    comments.push({
       mainlinePly: context.mainlinePly,
       position: context.position,
-      text: renderTemplate(context, facts),
+      text,
       facts,
-    };
+      plan,
+    });
   });
+
+  return comments;
 }

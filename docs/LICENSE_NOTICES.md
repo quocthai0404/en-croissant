@@ -34,6 +34,10 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
+## Stockfish
+
+The Windows installer bundles Stockfish 19 from the official Stockfish release. Stockfish is licensed under GPL-3.0-or-later. Its source and license information are available from the [official Stockfish repository](https://github.com/official-stockfish/Stockfish). Redistribution of this application must continue to satisfy the GPL obligations that apply to both En Croissant and Stockfish.
+
 ## chess.js
 
 Chess Reviewer pins `chess.js` `1.4.0`, a BSD-2-Clause chess rules library. Its license text is reproduced below for packaged distributions:

@@ -6,6 +6,7 @@ import { type Draft, produce } from "immer";
 import { createStore, type StateCreator } from "zustand";
 import { persist } from "zustand/middleware";
 import type { BestMoves, Outcome, Score } from "@/bindings";
+import type { CommentaryPerspective } from "@/commentary/perspective";
 import { createDebouncedSessionStorage } from "./debouncedStorage";
 import { ANNOTATION_INFO, type Annotation } from "@/utils/annotation";
 import { getPGN } from "@/utils/chess";
@@ -64,6 +65,7 @@ export interface TreeStoreState extends TreeState {
 
     setAnnotation: (payload: Annotation) => void;
     setComment: (payload: string) => void;
+    setCommentaryPerspective: (payload: CommentaryPerspective) => void;
     setGeneratedComments: (payload: { position: number[]; comment: GeneratedCommentMetadata }[]) => void;
     setHeaders: (payload: GameHeaders) => void;
     setResult: (payload: Outcome) => void;
@@ -451,6 +453,13 @@ export const createTreeStore = (id?: string, initialTree?: TreeState) => {
                     if (node) {
                         node.comment = payload;
                     }
+                }),
+            ),
+        setCommentaryPerspective: (payload) =>
+            set(
+                produce((state) => {
+                    state.dirty = true;
+                    state.commentaryPerspective = payload;
                 }),
             ),
         setGeneratedComments: (payload) =>

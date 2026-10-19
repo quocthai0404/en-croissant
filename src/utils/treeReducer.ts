@@ -3,6 +3,8 @@ import type { Move } from "chessops";
 import { INITIAL_FEN } from "chessops/fen";
 import type { Outcome, Score } from "@/bindings";
 import type { Annotation } from "./annotation";
+import type { CommentaryPerspective } from "@/commentary/perspective";
+import type { CommentaryPlan } from "@/commentary/types";
 import { positionFromFen } from "./chessops";
 
 export interface TreeState {
@@ -11,6 +13,7 @@ export interface TreeState {
     position: number[];
     dirty: boolean;
     report: ReportState;
+    commentaryPerspective?: CommentaryPerspective;
 }
 
 export interface TreeNode {
@@ -28,12 +31,20 @@ export interface TreeNode {
     clock?: number;
 }
 
-export interface GeneratedCommentMetadata {
-    schemaVersion: 1;
-    gameId: string;
-    ply: number;
-    text: string;
-}
+export type GeneratedCommentMetadata =
+    | {
+          schemaVersion: 1;
+          gameId: string;
+          ply: number;
+          text: string;
+      }
+    | {
+          schemaVersion: 2;
+          gameId: string;
+          ply: number;
+          text: string;
+          plan: CommentaryPlan;
+      };
 
 export type ListNode = {
     position: number[];
@@ -88,6 +99,7 @@ export function defaultTree(fen?: string): TreeState {
     return {
         dirty: false,
         position: [],
+        commentaryPerspective: "auto",
         root: {
             fen: fen?.trim() ?? INITIAL_FEN,
             move: null,

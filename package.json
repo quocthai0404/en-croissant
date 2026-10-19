@@ -1,13 +1,15 @@
 {
-  "name": "en-croissant",
-  "version": "0.15.1",
+  "name": "chess-review",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
   "scripts": {
     "start-vite": "vite",
     "build-vite": "tsc --noEmit && vite build",
     "build": "tauri build --no-bundle",
-    "build:installer": "tauri build",
+    "prepare:stockfish": "node scripts/prepare-stockfish.mjs",
+    "rename:installer": "node scripts/rename-installer.mjs",
+    "build:installer": "pnpm prepare:stockfish && tauri build --bundles nsis && pnpm rename:installer",
     "dev": "tauri dev",
     "tauri": "tauri",
     "format": "oxfmt",

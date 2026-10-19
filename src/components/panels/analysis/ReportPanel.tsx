@@ -1,4 +1,4 @@
-import { Grid, Group, Paper, ScrollArea, Stack, Text } from "@mantine/core";
+import { Grid, Group, Paper, ScrollArea, Select, Stack, Text } from "@mantine/core";
 import { IconZoomCheck } from "@tabler/icons-react";
 import cx from "clsx";
 import equal from "fast-deep-equal";
@@ -11,9 +11,11 @@ import { commands } from "@/bindings";
 import EvalChart from "@/components/common/EvalChart";
 import ProgressButton from "@/components/common/ProgressButton";
 import { TreeStateContext } from "@/components/common/TreeStateContext";
-import { activeTabAtom, currentReportModalOpenAtom } from "@/state/atoms";
+import { activeTabAtom, currentReportModalOpenAtom, sessionsAtom } from "@/state/atoms";
 import { ANNOTATION_INFO, isBasicAnnotation } from "@/utils/annotation";
 import { getGameStats, getMainLine } from "@/utils/chess";
+import { getCommentsForPerspective } from "@/commentary/service";
+import { type CommentaryPerspective } from "@/commentary/perspective";
 import classes from "./AnalysisPanel.module.css";
 import ReportModal from "./ReportModal";
 
@@ -21,10 +23,15 @@ function ReportPanel() {
   const { t } = useTranslation();
 
   const activeTab = useAtomValue(activeTabAtom);
+  const sessions = useAtomValue(sessionsAtom);
 
   const store = useContext(TreeStateContext)!;
   const root = useStore(store, (s) => s.root);
+  const headers = useStore(store, (s) => s.headers);
+  const commentaryPerspective = useStore(store, (s) => s.commentaryPerspective ?? "auto");
   const position = useStore(store, (s) => s.position);
+  const setCommentaryPerspective = useStore(store, (s) => s.setCommentaryPerspective);
+  const setGeneratedComments = useStore(store, (s) => s.setGeneratedComments);
   const currentNode = getNodeAtPath(root, position);
   const [reportingMode, setReportingMode] = useAtom(currentReportModalOpenAtom);
 
@@ -50,6 +57,18 @@ function ReportPanel() {
     setReportingMode(false);
   }, [setReportingMode]);
 
+  const changeCommentaryPerspective = useCallback(
+    (value: string | null) => {
+      if (value !== "auto" && value !== "white" && value !== "black" && value !== "neutral") {
+        return;
+      }
+      const perspective: CommentaryPerspective = value;
+      setCommentaryPerspective(perspective);
+      setGeneratedComments(getCommentsForPerspective(root, perspective, headers, sessions));
+    },
+    [headers, root, sessions, setCommentaryPerspective, setGeneratedComments],
+  );
+
   return (
     <ScrollArea offsetScrollbars>
       <ReportModal
@@ -62,6 +81,17 @@ function ReportPanel() {
         setRequestInvalidator={setRequestInvalidator}
       />
       <Stack mb="lg" gap="0.4rem" mr="xs">
+        <Select
+          label="Góc nhìn bình luận"
+          data={[
+            { value: "auto", label: "Tự động" },
+            { value: "white", label: "Trắng" },
+            { value: "black", label: "Đen" },
+            { value: "neutral", label: "Trung lập" },
+          ]}
+          value={commentaryPerspective}
+          onChange={changeCommentaryPerspective}
+        />
         {currentNode.generatedComment && (
           <Paper withBorder p="md">
             <Text size="xs" c="dimmed" fw={700} mb="xs">

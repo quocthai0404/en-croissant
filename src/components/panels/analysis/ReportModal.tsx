@@ -1,4 +1,4 @@
-import { Alert, Anchor, Button, Checkbox, Group, Modal, NumberInput, Select, Stack, Text } from "@mantine/core";
+import { Alert, Button, Checkbox, Group, Modal, NumberInput, Select, Stack, Text } from "@mantine/core";
 import { useForm } from "@mantine/form";
 import { notifications } from "@mantine/notifications";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
@@ -9,12 +9,13 @@ import { useStore } from "zustand";
 import { open } from "@tauri-apps/plugin-dialog";
 import { commands, type GoMode } from "@/bindings";
 import { TreeStateContext } from "@/components/common/TreeStateContext";
-import { enginesAtom, referenceDbAtom } from "@/state/atoms";
+import { enginesAtom, referenceDbAtom, sessionsAtom } from "@/state/atoms";
 import { type LocalEngine, requiredEngineSettings } from "@/utils/engines";
 import { generateCommentary } from "@/commentary/service";
 import { getStableGameId } from "@/commentary/types";
+import { resolveViewerSide } from "@/commentary/perspective";
 import { getTreeStructureHash } from "@/utils/treeReducer";
-import { getMainLine } from "@/utils/chess";
+import { getLastMainlinePosition, getMainLine, getOpening } from "@/utils/chess";
 import { unwrap } from "@/utils/unwrap";
 
 const reportSettingsAtom = atomWithStorage("report-settings", {
@@ -46,6 +47,7 @@ function ReportModal({
 
   const referenceDb = useAtomValue(referenceDbAtom);
   const engines = useAtomValue(enginesAtom);
+  const sessions = useAtomValue(sessionsAtom);
   const setEngines = useSetAtom(enginesAtom);
   const localEngines = useMemo(
     () => (engines ?? []).filter((e): e is LocalEngine => e.type === "local"),
@@ -154,6 +156,9 @@ function ReportModal({
     const initialRoot = store.getState().root;
     const initialTreeHash = getTreeStructureHash(initialRoot);
     const initialGameId = getStableGameId(initialFen, moves);
+    const openingNamePromise = getOpening(initialRoot, getLastMainlinePosition(initialRoot)).catch(
+      () => "",
+    );
     const engine = localEngines.find((e) => e.id === form.values.engine);
     const engineSettings = (engine?.settings ?? []).map((s) => ({
       ...s,
@@ -197,16 +202,37 @@ function ReportModal({
       addAnalysis(analysis.data, {
         showVariations: form.values.variations,
       });
+      const analyzedRoot = store.getState().root;
+      const analyzedTreeHash = getTreeStructureHash(analyzedRoot);
+      const openingName = await openingNamePromise;
+      if (token !== requestToken.current) return;
       const reviewedRoot = store.getState().root;
-      const comments = generateCommentary(reviewedRoot, initialGameId, analysis.data);
+      if (
+        reviewedRoot.fen !== initialRoot.fen ||
+        getTreeStructureHash(reviewedRoot) !== analyzedTreeHash ||
+        getMainLine(reviewedRoot).join(" ") !== moves.join(" ")
+      ) {
+        return;
+      }
+      const { commentaryPerspective, headers } = store.getState();
+      const viewerSide = resolveViewerSide(
+        commentaryPerspective ?? "auto",
+        headers,
+        sessions,
+      );
+      const comments = generateCommentary(reviewedRoot, initialGameId, analysis.data, {
+        openingName: openingName || undefined,
+        viewerSide,
+      });
       setGeneratedComments(
-        comments.map(({ position, mainlinePly, text }) => ({
+        comments.map(({ position, mainlinePly, text, plan }) => ({
           position,
           comment: {
-            schemaVersion: 1,
+            schemaVersion: 2,
             gameId: initialGameId,
             ply: mainlinePly,
             text,
+            plan,
           },
         })),
       );
@@ -232,14 +258,11 @@ function ReportModal({
       <form onSubmit={form.onSubmit(() => analyze())}>
         <Stack>
           {localEngines.length === 0 && (
-            <Alert title="Cần thêm engine cục bộ" color="blue">
+            <Alert title="Không tìm thấy Stockfish đi kèm" color="red">
               <Text size="sm" mb="xs">
-                Tải Stockfish cho Windows, giải nén rồi chọn tệp thực thi. Ứng dụng sẽ kiểm tra
-                khả năng khởi tạo UCI; Stockfish không đi kèm installer.
+                Bản cài đặt bình thường tự thêm Stockfish. Hãy cài lại ứng dụng nếu engine đi kèm
+                bị thiếu, hoặc chọn một UCI engine khác bên dưới.
               </Text>
-              <Anchor href="https://stockfishchess.org/download/" target="_blank" rel="noreferrer">
-                Trang tải Stockfish chính thức
-              </Anchor>
               <Button type="button" mt="sm" size="xs" loading={addingEngine} onClick={chooseLocalEngine}>
                 Chọn tệp engine .exe
               </Button>
