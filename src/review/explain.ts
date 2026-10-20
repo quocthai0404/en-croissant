@@ -62,7 +62,7 @@ function boardKey(square: string) {
   return parsed === undefined ? undefined : makeSquare(parsed);
 }
 
-function factOverlay(record: ReviewEvidenceRecord): DrawShape[] {
+export function buildVerifiedExplainOverlay(record: ReviewEvidenceRecord): DrawShape[] {
   const shapes: DrawShape[] = [];
   const addArrow = (orig?: string, dest?: string) => {
     if (!orig || !dest || orig === dest || shapes.some((shape) => shape.orig === orig && shape.dest === dest)) return;
@@ -87,6 +87,11 @@ function factOverlay(record: ReviewEvidenceRecord): DrawShape[] {
   if (verifiedFacts(record).some((fact) => fact.code === "CAPTURED_PIECE")) {
     addArrow(record.playedMove.from, record.playedMove.to);
   }
+  return shapes;
+}
+
+function factOverlay(record: ReviewEvidenceRecord): DrawShape[] {
+  const shapes = buildVerifiedExplainOverlay(record);
   if (shapes.length > 0) return shapes;
 
   const bestMove = record.bestAlternativeBefore?.uci[0];

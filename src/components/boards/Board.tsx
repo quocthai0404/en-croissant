@@ -1,7 +1,7 @@
 import type { DrawBrushes, DrawShape } from "@lichess-org/chessground/draw";
-import { ActionIcon, Box, Center, Group, Text, useMantineTheme } from "@mantine/core";
+import { ActionIcon, Box, Button, Center, Group, Text, Tooltip, useMantineTheme } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
-import { IconChevronRight } from "@tabler/icons-react";
+import { IconChevronRight, IconSwitchVertical } from "@tabler/icons-react";
 import {
   makeSquare,
   makeUci,
@@ -15,7 +15,7 @@ import { chessgroundDests, chessgroundMove } from "chessops/compat";
 import { makeFen, parseFen } from "chessops/fen";
 import { makeSan } from "chessops/san";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
-import { memo, useCallback, useContext, useMemo, useState } from "react";
+import { memo, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { useHotkeys } from "react-hotkeys-hook";
 import { useTranslation } from "react-i18next";
 import { match } from "ts-pattern";
@@ -26,7 +26,7 @@ import {
   autoPromoteAtom,
   bestMovesFamily,
   currentEvalOpenAtom,
-  currentExplainOverlayAtom,
+  currentReviewPreviewAtom,
   currentShowCommentsAtom,
   currentTabAtom,
   deckAtomFamily,
@@ -50,9 +50,12 @@ import {
 import { keyMapAtom } from "@/state/keybinds";
 import classes from "@/styles/Chessboard.module.css";
 import { ANNOTATION_INFO, isBasicAnnotation } from "@/utils/annotation";
-import { getVariationLine } from "@/utils/chess";
+import { getMainLine, getVariationLine } from "@/utils/chess";
 import { chessopsError, forceEnPassant, positionFromFen } from "@/utils/chessops";
 import { getTabFile, getTabGameNumber } from "@/utils/tabs";
+import { getPreviewCurrentStep, getPreviewFen, getPreviewStepOverlay, isReviewPreviewCurrent } from "@/review/preview";
+import { isReviewEvidenceCurrent } from "@/review/evidence";
+import { useReviewBoardOrientation } from "@/hooks/useReviewBoardOrientation";
 import ShowMaterial from "../common/ShowMaterial";
 import { TreeStateContext } from "../common/TreeStateContext";
 import FideInfo from "../databases/FideInfo";
@@ -107,12 +110,37 @@ function Board({
 
   const root = useStore(store, (s) => s.root);
   const rootFen = useStore(store, (s) => s.root.fen);
+  const position = useStore(store, (s) => s.position);
+  const reviewEvidence = useStore(store, (s) => s.report.evidence);
   const moves = useStore(
     store,
     useShallow((s) => getVariationLine(s.root, s.position)),
   );
   const headers = useStore(store, (s) => s.headers);
   const currentNode = useStore(store, (s) => s.currentNode());
+  const currentTab = useAtomValue(currentTabAtom);
+  const reviewOrientation = useReviewBoardOrientation();
+  const reviewPreview = useAtomValue(currentReviewPreviewAtom);
+  const setReviewPreview = useSetAtom(currentReviewPreviewAtom);
+  const mainline = getMainLine(root);
+  const evidenceIsCurrent = isReviewEvidenceCurrent(reviewEvidence, root.fen, mainline);
+  const boardPreview = reviewOrientation.isReviewWorkspace && reviewPreview && evidenceIsCurrent && isReviewPreviewCurrent(reviewPreview, {
+    activeTab: currentTab?.value ?? "",
+    gameId: reviewEvidence.gameId,
+    rootFen: root.fen,
+    mainlineIdentity: mainline.join(" "),
+    position,
+    availableMoveIds: reviewEvidence.records.map((record) => record.moveId),
+  })
+    ? reviewPreview
+    : null;
+  const boardFen = boardPreview ? getPreviewFen(boardPreview) : currentNode.fen;
+
+  useEffect(() => {
+    if (reviewPreview && reviewPreview.activeTab !== currentTab?.value) {
+      setReviewPreview(null);
+    }
+  }, [currentTab?.value, reviewPreview, setReviewPreview]);
 
   const arrows = useAtomValue(
     bestMovesFamily({
@@ -129,7 +157,7 @@ function Board({
   const setShapes = useStore(store, (s) => s.setShapes);
   const setFen = useStore(store, (s) => s.setFen);
 
-  const [pos, error] = positionFromFen(currentNode.fen);
+  const [pos, error] = positionFromFen(boardFen);
   const [whiteFideOpen, setWhiteFideOpen] = useState(false);
   const [blackFideOpen, setBlackFideOpen] = useState(false);
 
@@ -153,18 +181,23 @@ function Board({
   const [pendingMove, setPendingMove] = useState<NormalMove | null>(null);
 
   const turn = pos?.turn || "white";
-  const orientation = headers.orientation || "white";
-  const toggleOrientation = () =>
-    setHeaders({
-      ...headers,
-      fen: root.fen,
-      orientation: orientation === "black" ? "white" : "black",
-    });
+  const orientation = reviewOrientation.isReviewWorkspace
+    ? reviewOrientation.orientation
+    : headers.orientation || "white";
+  const toggleOrientation = () => {
+    if (reviewOrientation.isReviewWorkspace) {
+      reviewOrientation.flip();
+    } else {
+      setHeaders({
+        ...headers,
+        fen: root.fen,
+        orientation: orientation === "black" ? "white" : "black",
+      });
+    }
+  };
 
   const keyMap = useAtomValue(keyMapAtom);
   useHotkeys(keyMap.SWAP_ORIENTATION.keys, () => toggleOrientation());
-  const currentTab = useAtomValue(currentTabAtom);
-  const explainOverlay = useAtomValue(currentExplainOverlayAtom);
   const tabFile = getTabFile(currentTab);
   const [evalOpen, setEvalOpen] = useAtom(currentEvalOpenAtom);
 
@@ -180,7 +213,7 @@ function Board({
   const cardStartTime = useAtomValue(practiceCardStartTimeAtom);
 
   async function makeMove(move: NormalMove) {
-    if (!pos) return;
+    if (!pos || boardPreview) return;
     const san = makeSan(pos, move);
     if (practicing) {
       const c = deck.positions.find((c) => c.fen === currentNode.fen);
@@ -242,7 +275,7 @@ function Board({
   }
 
   let shapes: DrawShape[] = [];
-  if (showArrows && evalOpen && arrows.size > 0 && pos) {
+  if (!boardPreview && showArrows && evalOpen && arrows.size > 0 && pos) {
     const entries = Array.from(arrows.entries()).sort((a, b) => a[0] - b[0]);
     for (const [i, moves] of entries) {
       if (i < 4) {
@@ -296,7 +329,7 @@ function Board({
   }
 
   // Variation arrows: show all children moves when there are alternatives
-  if (showVariationArrows && !practicing && currentNode.children.length > 1) {
+  if (!boardPreview && showVariationArrows && !practicing && currentNode.children.length > 1) {
     for (const child of currentNode.children) {
       if (child.move) {
         const m = child.move as NormalMove;
@@ -316,11 +349,11 @@ function Board({
     }
   }
 
-  if (currentNode.shapes.length > 0) {
+  if (!boardPreview && currentNode.shapes.length > 0) {
     shapes = shapes.concat(currentNode.shapes);
   }
-  if (explainOverlay.length > 0) {
-    shapes = shapes.concat(explainOverlay);
+  if (boardPreview) {
+    shapes = shapes.concat(boardPreview.factsOverlay, getPreviewStepOverlay(getPreviewCurrentStep(boardPreview)));
   }
 
   const hasClock =
@@ -333,7 +366,7 @@ function Board({
   const practiceLock = !!practicing && !deck.positions.find((c) => c.fen === currentNode.fen);
 
   const movableColor: "white" | "black" | "both" | undefined = useMemo(() => {
-    return practiceLock
+    return boardPreview || practiceLock
       ? undefined
       : editingMode
         ? "both"
@@ -344,7 +377,7 @@ function Board({
             .with("both", () => "both" as const)
             .with("none", () => undefined)
             .exhaustive();
-  }, [practiceLock, editingMode, movable, turn]);
+  }, [boardPreview, practiceLock, editingMode, movable, turn]);
 
   const theme = useMantineTheme();
   const color = ANNOTATION_INFO[currentNode.annotations[0]]?.color || "gray";
@@ -354,11 +387,11 @@ function Board({
   const [enableBoardScroll] = useAtom(enableBoardScrollAtom);
   const [snapArrows] = useAtom(snapArrowsAtom);
   const showComments = useAtomValue(currentShowCommentsAtom);
-  const visualAnnotation = showComments ? currentNode.annotations[0] : "";
+  const visualAnnotation = showComments && !boardPreview ? currentNode.annotations[0] : "";
 
   const setBoardFen = useCallback(
     (fen: string) => {
-      if (!fen || !editingMode) {
+      if (!fen || !editingMode || boardPreview) {
         return;
       }
       const newFen = `${fen} ${currentNode.fen.split(" ").slice(1).join(" ")}`;
@@ -367,7 +400,7 @@ function Board({
         setFen(newFen);
       }
     },
-    [editingMode, currentNode, setFen],
+    [editingMode, boardPreview, currentNode, setFen],
   );
 
   useHotkeys(keyMap.TOGGLE_EVAL_BAR.keys, () => setEvalOpen((e) => !e));
@@ -377,10 +410,18 @@ function Board({
     .with({ san: "O-O-O" }, ({ halfMoves }) => parseSquare(halfMoves % 2 === 1 ? "c1" : "c8"))
     .otherwise((node) => node.move?.to);
 
-  const lastMove =
+  const realLastMove =
     currentNode.move && square !== undefined
       ? [chessgroundMove(currentNode.move)[0], makeSquare(square)!]
       : undefined;
+  const previewStep = boardPreview ? getPreviewCurrentStep(boardPreview) : undefined;
+  const previewMoveFrom = previewStep ? parseSquare(previewStep.from) : undefined;
+  const previewMoveTo = previewStep ? parseSquare(previewStep.to) : undefined;
+  const lastMove = previewStep && previewMoveFrom !== undefined && previewMoveTo !== undefined
+    ? [makeSquare(previewMoveFrom)!, makeSquare(previewMoveTo)!]
+    : boardPreview
+      ? undefined
+      : realLastMove;
 
   const topPlayer = orientation === "white" ? headers.black : headers.white;
   const bottomPlayer = orientation === "white" ? headers.white : headers.black;
@@ -415,7 +456,7 @@ function Board({
             height={BAR_HEIGHT}
           >
             <ShowMaterial
-              fen={currentNode.fen}
+              fen={boardFen}
               color={orientation === "white" ? "black" : "white"}
               mode={materialDisplay}
             />
@@ -435,7 +476,8 @@ function Board({
             }}
             gap="sm"
           >
-            {showComments &&
+              {showComments &&
+              !boardPreview &&
               currentNode.annotations.length > 0 &&
               currentNode.move &&
               square !== undefined && (
@@ -469,7 +511,7 @@ function Board({
                   </ActionIcon>
                 </Center>
               )}
-              {evalOpen && <EvalBar score={currentNode.score || null} orientation={orientation} />}
+              {evalOpen && !boardPreview && <EvalBar score={currentNode.score || null} orientation={orientation} />}
             </Box>
             <Box
               style={
@@ -483,7 +525,7 @@ function Board({
               className={`${classes.chessboard} ${is3d ? "is3d" : ""}`}
               ref={boardRef}
               onClick={() => {
-                eraseDrawablesOnClick && clearShapes();
+                if (!boardPreview && eraseDrawablesOnClick) clearShapes();
               }}
               onWheel={(e) => {
                 if (enableBoardScroll) {
@@ -495,32 +537,79 @@ function Board({
                 }
               }}
             >
-              <PromotionModal
-                pendingMove={pendingMove}
-                cancelMove={() => setPendingMove(null)}
-                confirmMove={(p) => {
-                  if (pendingMove) {
-                    makeMove({
-                      from: pendingMove.from,
-                      to: pendingMove.to,
-                      promotion: p,
-                    });
-                  }
-                }}
-                turn={turn}
-                orientation={orientation}
-              />
+              {reviewOrientation.isReviewWorkspace && (
+                <Group
+                  pos="absolute"
+                  top={6}
+                  right={6}
+                  gap={4}
+                  style={{ zIndex: 10, pointerEvents: "auto" }}
+                >
+                  {boardPreview && (
+                    <Text size="xs" fw={700} c="white" bg="dark.7" px={6} py={3}>
+                      ENGINE LINE PREVIEW
+                    </Text>
+                  )}
+                  <Tooltip label="Flip board">
+                    <Button
+                      size="compact-xs"
+                      variant="filled"
+                      leftSection={<IconSwitchVertical size="0.9rem" />}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        reviewOrientation.flip();
+                      }}
+                      aria-label="Flip board"
+                    >
+                      Flip board
+                    </Button>
+                  </Tooltip>
+                  {reviewOrientation.preference !== "auto" && (
+                    <Tooltip label="Return to Auto orientation">
+                      <Button
+                        size="compact-xs"
+                        variant="default"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          reviewOrientation.resetToAuto();
+                        }}
+                        aria-label="Reset board orientation to Auto"
+                      >
+                        Auto
+                      </Button>
+                    </Tooltip>
+                  )}
+                </Group>
+              )}
+              {!boardPreview && (
+                <PromotionModal
+                  pendingMove={pendingMove}
+                  cancelMove={() => setPendingMove(null)}
+                  confirmMove={(p) => {
+                    if (pendingMove) {
+                      makeMove({
+                        from: pendingMove.from,
+                        to: pendingMove.to,
+                        promotion: p,
+                      });
+                    }
+                  }}
+                  turn={turn}
+                  orientation={orientation}
+                />
+              )}
 
               <Chessground
                 ref={cgRef}
                 setBoardFen={setBoardFen}
                 orientation={orientation}
-                fen={currentNode.fen}
+                fen={boardFen}
                 animation={{ enabled: !editingMode }}
                 coordinates={showCoordinates !== "no"}
                 coordinatesOnSquares={showCoordinates === "all"}
+                selectable={{ enabled: !boardPreview }}
                 movable={{
-                  free: editingMode,
+                  free: editingMode && !boardPreview,
                   color: movableColor,
                   dests:
                     editingMode || viewOnly
@@ -531,7 +620,7 @@ function Board({
                   showDests,
                   events: {
                     after(orig, dest, metadata) {
-                      if (!editingMode) {
+                      if (!editingMode && !boardPreview) {
                         const from = parseSquare(orig)!;
                         const to = parseSquare(dest)!;
 
@@ -566,7 +655,7 @@ function Board({
                 }}
                 events={{
                   select: (key) => {
-                    if (editingMode && selectedPiece) {
+                    if (editingMode && !boardPreview && selectedPiece) {
                       const square = parseSquare(key);
                       if (square) {
                         const setup = parseFen(currentNode.fen).unwrap();
@@ -579,15 +668,13 @@ function Board({
                 turnColor={turn}
                 check={moveHighlight && pos?.isCheck()}
                 lastMove={moveHighlight && !editingMode ? lastMove : undefined}
-                premovable={{
-                  enabled: enablePremoves && !editingMode && !viewOnly,
-                }}
                 draggable={{
-                  enabled: true,
+                  enabled: !boardPreview,
                   deleteOnDropOff: editingMode,
                 }}
+                premovable={{ enabled: enablePremoves && !editingMode && !viewOnly && !boardPreview }}
                 drawable={{
-                  enabled: true,
+                  enabled: !boardPreview,
                   visible: true,
                   defaultSnapToValidMove: snapArrows,
                   autoShapes: shapes,
@@ -610,9 +697,19 @@ function Board({
                       opacity: 0.42,
                       lineWidth: 10,
                     },
+                    preview: {
+                      key: "p",
+                      color: "#f08735",
+                      opacity: 0.95,
+                      lineWidth: 12,
+                    },
                   } as unknown as DrawBrushes,
                   onChange: (shapes) => {
-                    setShapes(shapes);
+                    if (!boardPreview) {
+                      setShapes(shapes.filter((shape) =>
+                        shape.brush === undefined || !["explain", "explainSquare", "preview"].includes(shape.brush),
+                      ));
+                    }
                   },
                 }}
               />
@@ -636,9 +733,9 @@ function Board({
               </Text>
             )}
 
-            {moveInput && <MoveInput currentNode={currentNode} />}
+            {moveInput && !boardPreview && <MoveInput currentNode={currentNode} />}
 
-            <ShowMaterial fen={currentNode.fen} color={orientation} mode={materialDisplay} />
+            <ShowMaterial fen={boardFen} color={orientation} mode={materialDisplay} />
             {hasClock && (
               <Clock color={orientation} turn={turn} whiteTime={whiteTime} blackTime={blackTime} />
             )}

@@ -15,6 +15,8 @@ import type {
 import type { ReviewLog } from "ts-fsrs";
 import { z } from "zod";
 import type { BestMoves, GoMode } from "@/bindings";
+import type { ReviewBoardPreview } from "@/review/preview";
+import type { ReviewBoardOrientationPreference } from "@/review/orientation";
 import { DEFAULT_TIME_CONTROL, type OpponentSettings } from "@/components/boards/OpponentForm";
 import { type Position, positionSchema } from "@/components/files/opening";
 import type { LocalOptions } from "@/components/panels/database/DatabasePanel";
@@ -218,6 +220,23 @@ export const telemetryEnabledAtom = atomWithStorage<boolean>(
     "chess-reviewer-telemetry-enabled",
     false,
     undefined,
+    { getOnInit: true },
+);
+
+const reviewBoardOrientationSchema = z.record(
+    z.object({
+        contextId: z.string(),
+        preference: z.enum(["auto", "white", "black"]),
+    }),
+);
+
+/** Local display preference only; it is deliberately not stored in PGN headers. */
+export const reviewBoardOrientationByTabAtom = atomWithStorage<
+    Record<string, { contextId: string; preference: ReviewBoardOrientationPreference }>
+>(
+    "review-board-orientation-v1",
+    {},
+    createZodStorage(reviewBoardOrientationSchema, localStorage),
     { getOnInit: true },
 );
 
@@ -435,6 +454,8 @@ export const currentAdvancedPanelAtom = tabValue(advancedPanelFamily);
 
 const explainOverlayFamily = atomFamily((_tab: string) => atom<DrawShape[]>([]));
 export const currentExplainOverlayAtom = tabValue(explainOverlayFamily);
+
+export const currentReviewPreviewAtom = atom<ReviewBoardPreview | null>(null);
 
 const practiceTabFamily = atomFamily((_tab: string) => atom("train"));
 export const currentPracticeTabAtom = tabValue(practiceTabFamily);

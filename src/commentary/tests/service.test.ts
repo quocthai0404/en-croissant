@@ -17,6 +17,7 @@ import { buildDiagnosticReportData, formatDiagnosticMarkdown } from "@/utils/dia
 import { buildReviewEvidence } from "@/review/evidence";
 import { buildExplainPresentation } from "@/review/explain";
 import { buildMoveCoachSummary } from "@/review/coach";
+import { buildLegalPreviewLine } from "@/review/preview";
 import { getMainLine } from "@/utils/chess";
 
 // Minimal mainline only; keep the regression case reproducible without publishing a raw PGN.
@@ -260,6 +261,27 @@ describe("deterministic move commentary", () => {
     expect(captureExplain.paragraphs[0]).toContain("sơ hở do 23.c4");
     expect(c4Explain.paragraphs.join(" ")).not.toContain("đã mất hậu");
     expect(captureExplain.overlay.some((shape) => shape.orig === "g7" && shape.dest === "b2")).toBe(true);
+  });
+
+  test("Engine Line Preview replays legal alternatives before 23.c4 and replies after it", () => {
+    const root = treeFromPgn();
+    const analysis = Array.from({ length: 49 }, () => analysisAt("", 0, 30));
+    analysis[44] = analysisAt("Rb1", -400, 30);
+    analysis[45] = analysisAt("Bxb2", -620, 30);
+    const evidence = buildReviewEvidence(root, "fixture-preview", analysis, Array(48).fill(null));
+    const c4 = evidence.records.find((record) => record.mainlinePly === 45)!;
+    const before = getNodeAtPath(root, c4.position.slice(0, -1));
+    const after = getNodeAtPath(root, c4.position);
+    const alternative = buildLegalPreviewLine(before.fen, c4.bestAlternativeBefore);
+    const continuation = buildLegalPreviewLine(after.fen, c4.bestReplyAfter);
+
+    expect(alternative?.steps[0]?.san).toBe("Rb1");
+    expect(continuation?.steps[0]?.san).toBe("Bxb2");
+    expect(c4.facts).toContainEqual(expect.objectContaining({
+      code: "OPENED_ATTACK_LINE",
+      actor: { side: "black", type: "b", square: "g7" },
+      target: { side: "white", type: "q", square: "b2" },
+    }));
   });
 
   test("separates legal capture, engine recommendation, and realized material capture", () => {

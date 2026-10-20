@@ -3,10 +3,8 @@ import {
   Alert,
   Badge,
   Button,
-  Divider,
   Grid,
   Group,
-  Modal,
   Paper,
   ScrollArea,
   Select,
@@ -19,7 +17,7 @@ import { IconInfoCircle, IconZoomCheck } from "@tabler/icons-react";
 import cx from "clsx";
 import equal from "fast-deep-equal";
 import { useAtom, useAtomValue } from "jotai";
-import React, { memo, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import React, { memo, useCallback, useContext, useEffect, useMemo, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { useStore } from "zustand";
 import { getNodeAtPath } from "@/utils/treeReducer";
@@ -29,17 +27,26 @@ import ProgressButton from "@/components/common/ProgressButton";
 import { TreeStateContext } from "@/components/common/TreeStateContext";
 import {
   activeTabAtom,
-  currentExplainOverlayAtom,
   currentReportModalOpenAtom,
+  currentReviewPreviewAtom,
   sessionsAtom,
 } from "@/state/atoms";
 import { ANNOTATION_INFO, isBasicAnnotation } from "@/utils/annotation";
 import { getGameStats, getMainLine } from "@/utils/chess";
 import { type CommentaryPerspective, resolveViewerSide } from "@/commentary/perspective";
-import { buildExplainPresentation } from "@/review/explain";
+import { buildExplainPresentation, buildVerifiedExplainOverlay } from "@/review/explain";
 import { isReviewEvidenceCurrent } from "@/review/evidence";
 import { classificationGlyph, classificationLabel } from "@/review/classification";
 import { buildMoveCoachSummary, findReviewRecordAtPosition, getReviewRowScrollTop } from "@/review/coach";
+import {
+  buildLegalPreviewLine,
+  choosePreferredPreviewLine,
+  getPreviewCurrentStep,
+  isReviewPreviewCurrent,
+  updateReviewPreviewLine,
+  updateReviewPreviewPlayback,
+  type ReviewPreviewLineType,
+} from "@/review/preview";
 import type { ReviewEvidenceRecord } from "@/review/types";
 import classes from "./AnalysisPanel.module.css";
 import ReportModal from "./ReportModal";
@@ -61,10 +68,7 @@ function ReportPanel() {
   const evidence = useStore(store, (s) => s.report.evidence);
   const goToMove = useStore(store, (s) => s.goToMove);
   const currentNode = getNodeAtPath(root, position);
-  const [, setExplainOverlay] = useAtom(currentExplainOverlayAtom);
-  const [explainRecord, setExplainRecord] = useState<ReviewEvidenceRecord | null>(null);
-  const [explainBoardPath, setExplainBoardPath] = useState<number[] | null>(null);
-  const [restorePath, setRestorePath] = useState<number[] | null>(null);
+  const [reviewPreview, setReviewPreview] = useAtom(currentReviewPreviewAtom);
   const [reportingMode, setReportingMode] = useAtom(currentReportModalOpenAtom);
 
   const inProgress = useStore(store, (s) => s.report.inProgress);
@@ -80,6 +84,14 @@ function ReportPanel() {
   const records = evidenceIsCurrent ? evidence.records : EMPTY_REVIEW_RECORDS;
   const selectedRecord = findReviewRecordAtPosition(records, position);
   const viewerSide = resolveViewerSide(commentaryPerspective, headers, sessions);
+  const activePreviewRecord = reviewPreview
+    ? records.find((record) => record.moveId === reviewPreview.moveId)
+    : undefined;
+  const previewPresentation = activePreviewRecord
+    ? buildExplainPresentation(activePreviewRecord, records, viewerSide)
+    : null;
+  const previewLine = reviewPreview?.lineType ? reviewPreview.lines[reviewPreview.lineType] : undefined;
+  const currentPvStep = reviewPreview ? getPreviewCurrentStep(reviewPreview) : undefined;
   const reviewRowElements = useRef(new Map<string, HTMLDivElement>());
   const reviewListViewport = useRef<HTMLDivElement>(null);
 
@@ -99,12 +111,32 @@ function ReportPanel() {
   }, [selectedRecord]);
 
   useEffect(() => {
-    if (!explainRecord || (explainBoardPath && position.join(".") !== explainBoardPath.join("."))) {
-      setExplainOverlay([]);
-    }
-  }, [position, explainRecord, explainBoardPath, setExplainOverlay]);
+    if (!reviewPreview) return;
+    if (!isReviewPreviewCurrent(reviewPreview, {
+      activeTab: activeTab ?? "",
+      gameId: evidence?.gameId ?? "",
+      rootFen: root.fen,
+      mainlineIdentity: mainline.join(" "),
+      position,
+      availableMoveIds: records.map((record) => record.moveId),
+    })) setReviewPreview(null);
+  }, [activeTab, mainline, position, records, reviewPreview, root.fen, setReviewPreview]);
 
-  useEffect(() => () => setExplainOverlay([]), [setExplainOverlay]);
+  useEffect(() => {
+    if (!reviewPreview?.playing) return;
+    const timer = window.setInterval(() => {
+      setReviewPreview((current) => {
+        if (!current?.playing || !current.lineType) return current;
+        const line = current.lines[current.lineType];
+        if (!line || current.stepIndex >= line.steps.length) {
+          return { ...current, playing: false };
+        }
+        const stepIndex = current.stepIndex + 1;
+        return { ...current, stepIndex, playing: stepIndex < line.steps.length };
+      });
+    }, 900);
+    return () => window.clearInterval(timer);
+  }, [reviewPreview?.playing, setReviewPreview]);
 
   const handleCancel = useCallback(() => {
     requestInvalidator.current?.();
@@ -128,32 +160,51 @@ function ReportPanel() {
     }, [setCommentaryPerspective]);
 
   const openExplain = useCallback((record: ReviewEvidenceRecord) => {
-    setExplainOverlay([]);
-    setRestorePath(record.position);
-    goToMove(record.position);
-    const presentation = buildExplainPresentation(record, records, viewerSide);
-    const boardPath = presentation.boardPosition === "before" ? record.position.slice(0, -1) : record.position;
-    setExplainBoardPath(boardPath);
-    if (presentation.boardPosition === "before") goToMove(boardPath);
-    setExplainOverlay(presentation.overlay);
-    setExplainRecord(record);
-  }, [goToMove, records, setExplainOverlay, viewerSide]);
-
-  const closeExplain = useCallback(() => {
-    const path = restorePath;
-    const boardWasStillOnExplainPosition = Boolean(
-      explainBoardPath && position.join(".") === explainBoardPath.join("."),
+    const beforeNode = getNodeAtPath(root, record.position.slice(0, -1));
+    const afterNode = getNodeAtPath(root, record.position);
+    const alternative = buildLegalPreviewLine(beforeNode.fen, record.bestAlternativeBefore);
+    const continuation = buildLegalPreviewLine(afterNode.fen, record.bestReplyAfter);
+    const lines = {
+      ...(alternative ? { alternative } : {}),
+      ...(continuation ? { continuation } : {}),
+    };
+    const lineType: ReviewPreviewLineType | null = choosePreferredPreviewLine(
+      record.classification,
+      alternative,
+      continuation,
     );
-    setExplainRecord(null);
-    setExplainBoardPath(null);
-    setExplainOverlay([]);
-    setRestorePath(null);
-    if (path && boardWasStillOnExplainPosition) goToMove(path);
-  }, [explainBoardPath, goToMove, position, restorePath, setExplainOverlay]);
+    const explanation = buildExplainPresentation(record, records, viewerSide);
+    const baseFen = lineType
+      ? lines[lineType]?.startFen ?? afterNode.fen
+      : explanation.boardPosition === "before"
+        ? beforeNode.fen
+        : afterNode.fen;
 
-  const explainPresentation = explainRecord
-    ? buildExplainPresentation(explainRecord, records, viewerSide)
-    : null;
+    setReviewPreview({
+      activeTab: activeTab ?? "",
+      gameId: evidence?.gameId ?? "",
+      rootFen: root.fen,
+      mainlineIdentity: mainline.join(" "),
+      sourcePosition: [...position],
+      moveId: record.moveId,
+      lineType,
+      baseFen,
+      lines,
+      stepIndex: 0,
+      playing: false,
+      factsOverlay: buildVerifiedExplainOverlay(record),
+    });
+  }, [activeTab, evidence?.gameId, mainline, position, records, root, setReviewPreview, viewerSide]);
+
+  const closeExplain = useCallback(() => setReviewPreview(null), [setReviewPreview]);
+
+  const setPreviewLine = useCallback((lineType: ReviewPreviewLineType) => {
+    setReviewPreview((current) => current ? updateReviewPreviewLine(current, lineType) : current);
+  }, [setReviewPreview]);
+
+  const updatePreviewStep = useCallback((action: "previous" | "next" | "replay" | "toggle") => {
+    setReviewPreview((current) => current ? updateReviewPreviewPlayback(current, action) : current);
+  }, [setReviewPreview]);
 
   return (
     <Stack h="100%" gap="xs" miw={0}>
@@ -188,6 +239,102 @@ function ReportPanel() {
       <ScrollArea offsetScrollbars flex={1} mih={0}>
       <Stack mb="lg" gap="xs" mr="xs" px="xs">
         <MoveCoachCard record={selectedRecord} hasReview={records.length > 0} />
+        {reviewPreview && activePreviewRecord && previewPresentation && (
+          <Paper withBorder p="sm" data-engine-line-preview="true" aria-live="polite">
+            <Group justify="space-between" align="flex-start" wrap="nowrap">
+              <Stack gap={2}>
+                <Text fw={700} size="sm">Engine Line Preview · {activePreviewRecord.san}</Text>
+                <Text size="xs" c="dimmed">
+                  {reviewPreview.lineType === "alternative"
+                    ? "Better alternative · position before the played move"
+                    : reviewPreview.lineType === "continuation"
+                      ? "Best continuation · position after the played move"
+                      : "No playable engine line is available for this move"}
+                </Text>
+              </Stack>
+              <Button size="compact-xs" variant="subtle" onClick={closeExplain}>Exit Preview</Button>
+            </Group>
+            <Stack gap={4} mt="xs">
+              {previewPresentation.paragraphs.map((paragraph, index) => (
+                <Text key={index} size="sm">{paragraph}</Text>
+              ))}
+              <Text size="xs" c="dimmed">
+                Engine PV · depth {previewLine?.depth ?? "–"} · variation, not a claim that the line is forced.
+              </Text>
+            </Stack>
+            {Boolean(reviewPreview.lines.alternative?.steps.length && reviewPreview.lines.continuation?.steps.length) ? (
+              <Group gap="xs" mt="sm">
+                <Button
+                  size="compact-xs"
+                  variant={reviewPreview.lineType === "alternative" ? "filled" : "default"}
+                  onClick={() => setPreviewLine("alternative")}
+                >
+                  Better alternative
+                </Button>
+                <Button
+                  size="compact-xs"
+                  variant={reviewPreview.lineType === "continuation" ? "filled" : "default"}
+                  onClick={() => setPreviewLine("continuation")}
+                >
+                  Best continuation
+                </Button>
+              </Group>
+            ) : null}
+            {previewLine?.steps.length ? (
+              <Stack gap="xs" mt="sm">
+                <Group justify="space-between" wrap="wrap">
+                  <Text size="sm" fw={600}>
+                    {currentPvStep
+                      ? `Current PV move: ${currentPvStep.san}`
+                      : `Starting position · next ${previewLine.steps[0]?.san ?? "–"}`}
+                  </Text>
+                  <Text size="xs" c="dimmed">
+                    Step {reviewPreview.stepIndex}/{previewLine.steps.length} · 0.9 s per move
+                  </Text>
+                </Group>
+                <Group gap={4} wrap="wrap" aria-label="Principal variation moves">
+                  {previewLine.steps.map((step, index) => (
+                    <Badge
+                      key={`${index}-${step.uci}`}
+                      variant={index === reviewPreview.stepIndex - 1 ? "filled" : "light"}
+                      color={index === reviewPreview.stepIndex - 1 ? "orange" : "gray"}
+                    >
+                      {step.san}
+                    </Badge>
+                  ))}
+                </Group>
+                <Group gap="xs" wrap="wrap">
+                  <Button size="compact-xs" onClick={() => updatePreviewStep("toggle")}>
+                    {reviewPreview.playing ? "Pause" : "Play"}
+                  </Button>
+                  <Button
+                    size="compact-xs"
+                    variant="default"
+                    disabled={reviewPreview.stepIndex === 0}
+                    onClick={() => updatePreviewStep("previous")}
+                  >
+                    Previous step
+                  </Button>
+                  <Button
+                    size="compact-xs"
+                    variant="default"
+                    disabled={reviewPreview.stepIndex >= previewLine.steps.length}
+                    onClick={() => updatePreviewStep("next")}
+                  >
+                    Next step
+                  </Button>
+                  <Button size="compact-xs" variant="default" onClick={() => updatePreviewStep("replay")}>
+                    Replay
+                  </Button>
+                </Group>
+              </Stack>
+            ) : (
+              <Alert color="yellow" mt="sm" title="No legal PV to play">
+                The saved engine line is empty or contains no legal opening move from this position. The game has not been changed, and Stockfish was not rerun.
+              </Alert>
+            )}
+          </Paper>
+        )}
         <Group justify="space-between" mt="xs">
           <Text fw={700}>Move Review</Text>
           <Select
@@ -221,8 +368,7 @@ function ReportPanel() {
                       else reviewRowElements.current.delete(record.moveId);
                     }}
                     onSelect={() => {
-                      setExplainRecord(null);
-                      setExplainOverlay([]);
+                      setReviewPreview(null);
                       goToMove(record.position);
                     }}
                     onExplain={() => openExplain(record)}
@@ -279,18 +425,6 @@ function ReportPanel() {
         <GameStats {...stats} />
       </Stack>
       </ScrollArea>
-      <Modal opened={Boolean(explainRecord)} onClose={closeExplain} title={explainRecord ? `Explain · ${Math.ceil(explainRecord.mainlinePly / 2)}${explainRecord.mainlinePly % 2 ? "." : "..."}${explainRecord.san}` : "Explain"} centered>
-        {explainRecord && explainPresentation && (
-          <Stack>
-            {explainPresentation.paragraphs.map((paragraph, index) => <Text key={index}>{paragraph}</Text>)}
-            <Divider />
-            <Text size="xs" c="dimmed">
-              Evidence: {explainRecord.beforeDepth ?? "–"}/{explainRecord.afterDepth ?? "–"} depth · {explainRecord.facts.filter((fact) => fact.confidence === "verified").length} verified fact(s)
-            </Text>
-            <Button onClick={closeExplain}>Close</Button>
-          </Stack>
-        )}
-      </Modal>
     </Stack>
   );
 }

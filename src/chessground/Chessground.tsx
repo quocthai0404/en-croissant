@@ -104,11 +104,11 @@ export function Chessground({ ref, ...props }: ChessgroundProps) {
         },
         draggable: {
           ...props.draggable,
-          enabled: moveMethod !== "select",
+          enabled: props.draggable?.enabled !== false && moveMethod !== "select",
         },
         selectable: {
           ...props.selectable,
-          enabled: moveMethod !== "drag",
+          enabled: props.selectable?.enabled !== false && moveMethod !== "drag",
         },
         addPieceZIndex: is3d,
       });
@@ -129,11 +129,11 @@ export function Chessground({ ref, ...props }: ChessgroundProps) {
       },
       draggable: {
         ...props.draggable,
-        enabled: moveMethod !== "select",
+        enabled: props.draggable?.enabled !== false && moveMethod !== "select",
       },
       selectable: {
         ...props.selectable,
-        enabled: moveMethod !== "drag",
+        enabled: props.selectable?.enabled !== false && moveMethod !== "drag",
       },
       addPieceZIndex: is3d,
     });

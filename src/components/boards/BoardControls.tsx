@@ -25,6 +25,7 @@ import {
   currentTabAtom,
   eraseDrawablesOnClickAtom,
 } from "@/state/atoms";
+import { useReviewBoardOrientation } from "@/hooks/useReviewBoardOrientation";
 import { keyMapAtom } from "@/state/keybinds";
 
 interface BoardControlsProps {
@@ -62,14 +63,22 @@ function BoardControls({
   const setGameState = useSetAtom(currentGameStateAtom);
   const autoSave = useAtomValue(autoSaveAtom);
   const eraseDrawablesOnClick = useAtomValue(eraseDrawablesOnClickAtom);
+  const reviewOrientation = useReviewBoardOrientation();
 
-  const orientation = headers.orientation || "white";
-  const toggleOrientation = () =>
-    setHeaders({
-      ...headers,
-      fen: root.fen,
-      orientation: orientation === "black" ? "white" : "black",
-    });
+  const orientation = reviewOrientation.isReviewWorkspace
+    ? reviewOrientation.orientation
+    : headers.orientation || "white";
+  const toggleOrientation = () => {
+    if (reviewOrientation.isReviewWorkspace) {
+      reviewOrientation.flip();
+    } else {
+      setHeaders({
+        ...headers,
+        fen: root.fen,
+        orientation: orientation === "black" ? "white" : "black",
+      });
+    }
+  };
 
   function changeTabType() {
     setCurrentTab((t) => {

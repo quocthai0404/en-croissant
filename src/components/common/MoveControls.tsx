@@ -5,12 +5,13 @@ import {
   IconChevronsLeft,
   IconChevronsRight,
 } from "@tabler/icons-react";
-import { useAtomValue } from "jotai";
+import { useAtom, useAtomValue } from "jotai";
 import { memo, useContext } from "react";
 import { useHotkeys } from "react-hotkeys-hook";
 import { useStore } from "zustand";
 import { useDeleteMove } from "@/hooks/useDeleteMove";
 import { keyMapAtom } from "@/state/keybinds";
+import { currentReviewPreviewAtom } from "@/state/atoms";
 import { TreeStateContext } from "./TreeStateContext";
 
 function MoveControls({ readOnly }: { readOnly?: boolean }) {
@@ -26,12 +27,30 @@ function MoveControls({ readOnly }: { readOnly?: boolean }) {
   const previousBranch = useStore(store, (s) => s.previousBranch);
   const nextBranching = useStore(store, (s) => s.nextBranching);
   const previousBranching = useStore(store, (s) => s.previousBranching);
+  const [, setReviewPreview] = useAtom(currentReviewPreviewAtom);
+
+  const nextMove = () => {
+    setReviewPreview(null);
+    next();
+  };
+  const previousMove = () => {
+    setReviewPreview(null);
+    previous();
+  };
+  const goToStart = () => {
+    setReviewPreview(null);
+    start();
+  };
+  const goToEnd = () => {
+    setReviewPreview(null);
+    end();
+  };
 
   const keyMap = useAtomValue(keyMapAtom);
-  useHotkeys(keyMap.PREVIOUS_MOVE.keys, previous);
-  useHotkeys(keyMap.NEXT_MOVE.keys, next);
-  useHotkeys(keyMap.GO_TO_START.keys, start);
-  useHotkeys(keyMap.GO_TO_END.keys, end);
+  useHotkeys(keyMap.PREVIOUS_MOVE.keys, previousMove);
+  useHotkeys(keyMap.NEXT_MOVE.keys, nextMove);
+  useHotkeys(keyMap.GO_TO_START.keys, goToStart);
+  useHotkeys(keyMap.GO_TO_END.keys, goToEnd);
   useHotkeys(keyMap.DELETE_MOVE.keys, readOnly ? () => {} : () => deleteMove());
   useHotkeys(keyMap.GO_TO_BRANCH_START.keys, startBranch);
   useHotkeys(keyMap.GO_TO_BRANCH_END.keys, endBranch);
@@ -42,16 +61,16 @@ function MoveControls({ readOnly }: { readOnly?: boolean }) {
 
   return (
     <Group grow gap="xs">
-      <ActionIcon variant="default" size="lg" onClick={start}>
+      <ActionIcon variant="default" size="lg" onClick={goToStart}>
         <IconChevronsLeft />
       </ActionIcon>
-      <ActionIcon variant="default" size="lg" onClick={previous}>
+      <ActionIcon variant="default" size="lg" onClick={previousMove}>
         <IconChevronLeft />
       </ActionIcon>
-      <ActionIcon variant="default" size="lg" onClick={next}>
+      <ActionIcon variant="default" size="lg" onClick={nextMove}>
         <IconChevronRight />
       </ActionIcon>
-      <ActionIcon variant="default" size="lg" onClick={end}>
+      <ActionIcon variant="default" size="lg" onClick={goToEnd}>
         <IconChevronsRight />
       </ActionIcon>
     </Group>
